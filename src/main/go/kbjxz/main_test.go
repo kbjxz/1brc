@@ -252,27 +252,59 @@ func newCyclicBytesLeakyBuffer(n, size int) chan []byte {
 	return ch
 }
 
+func Test_readFileChunks(t *testing.T) {
+	meta := must(getMeta(testParams))
+	put := make(chan []byte)
+	get := newCyclicBytesLeakyBuffer(3, GB)
+	chErr := make(chan error)
+	go func() {
+		defer close(put)
+		chErr <- readFileChunks(&meta, put, get)
+	}()
+
+	var (
+		err     error
+		tailBuf = [32]byte{}
+		chunk   []byte
+		ok      bool
+		i       = 0
+	)
+	for {
+		select {
+		case err = <-chErr:
+		case chunk, ok = <-put:
+		}
+
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+
+		if !ok {
+			break
+		}
+
+		tailSize := min(len(chunk), len(tailBuf))
+		copy(tailBuf[:], chunk[len(chunk)-tailSize:])
+		tail := string(tailBuf[:tailSize])
+		if !strings.HasSuffix(tail, "\n") {
+			t.Logf("[chunk:%d] doesn't end with \n: %s\n", i, tail)
+		}
+		i++
+		get <- chunk
+	}
+}
+
 func Benchmark_readFileChunks(b *testing.B) {
 	meta := must(getMeta(testParams))
 	put := make(chan []byte)
-	defer close(put)
 	get := newCyclicBytesLeakyBuffer(3, GB)
+
 	go func() {
-		tailBuf := [32]byte{}
-		i := 0
-		for chunk := range put {
-			tailSize := min(len(chunk), len(tailBuf))
-			copy(tailBuf[:], chunk[len(chunk)-tailSize:])
-			fmt.Printf("[%d] %s\n", i, 
-				strings.ReplaceAll(string(tailBuf[:tailSize]), "\n", "\\n"))
-			i++
-			get <- chunk
-		}
+		defer close(put)
+		readFileChunks(&meta, put, get)
 	}()
-	for b.Loop() {
-		err := readFileChunks(&meta, put, get)
-		if err != nil {
-			b.Fatalf("%+v", err)
-		}
+
+	for chunk := range put {
+		get <- chunk
 	}
 }
