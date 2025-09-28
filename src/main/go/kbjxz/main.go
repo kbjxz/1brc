@@ -163,8 +163,14 @@ func parseRegion(meta *fileMeta, region fileRegion) ([]stationData, error) {
 	defer f.Close()
 	must(f.Seek(region.Start, 0))
 
-	buf := make([]byte, region.End-region.Start)
-	must(f.Read(buf))
+	regionSize := region.End - region.Start
+	buf := make([]byte, regionSize)
+	readSize, err := f.Read(buf)
+	if err != nil {
+		return nil, errors.Wrapf(err, "region:%+v", region)
+	}
+	assert(int64(readSize) == regionSize,
+		fmt.Sprintf("[readRegion] exp:%d, got: %d", readSize, regionSize))
 
 	const expSize = 50000
 	var (
