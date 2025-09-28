@@ -47,3 +47,7 @@ out/
 /*.out
 out_expected.txt
 /*-timing.json
+
+data/
+measurements.txt
+weather_stations.csv
