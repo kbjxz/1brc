@@ -64,15 +64,20 @@ func getMeta(fname string) (fileMeta, error) {
 	ret.BufSize = int(min(ret.ChunkSize, defaultBufSize))
 
 	ret.Regions = make([]fileRegion, ret.Procs)
-	var offset int64
+	offset := int64(0)
 	peekBuf := [128]byte{}
-	for i := 0; i < len(ret.Regions)-1; i++ {
+	for i := 0; i < len(ret.Regions); i++ {
 		region := &ret.Regions[i]
 		region.Start = offset
 
+		if i == len(ret.Regions)-1 {
+			region.End = ret.FileSize
+			break
+		}
+
 		// search '\n' in [offset-1, (offset-1)+128)
 		offset += ret.ChunkSize
-		f.Seek(offset-1, 0)
+		must(f.Seek(max(0, offset-1), 0))
 		n, err := f.Read(peekBuf[:])
 		if err != nil {
 			return ret, errors.WithStack(err)
@@ -81,12 +86,11 @@ func getMeta(fname string) (fileMeta, error) {
 
 		// include '\n' in the region for easy scanline
 		assert(lineBreak != -1, "'\n' not found")
+		// fmt.Printf("[region:%d] tail: %s\n", i, strings.ReplaceAll(
+		// 	string(peekBuf[:lineBreak+1]), "\n", "\\n"))
 		offset += int64(lineBreak + 1)
 		region.End = offset
 	}
-	lastRegion := &ret.Regions[len(ret.Regions)-1]
-	lastRegion.Start = offset
-	lastRegion.End = ret.FileSize
 
 	return ret, nil
 }
