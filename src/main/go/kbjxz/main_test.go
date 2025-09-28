@@ -1,13 +1,21 @@
 package main
 
 import (
+	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
 )
 
+var testParams = &params{
+	fileName:  "./measurements.txt",
+	procs:     1,
+	chunkSize: 1 * GB,
+}
+
 func Test_getMeta(t *testing.T) {
-	ret, err := getMeta("./measurements.txt")
+
+	ret, err := getMeta(testParams)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,5 +188,91 @@ func Benchmark_reduce(b *testing.B) {
 func Benchmark_reduce2(b *testing.B) {
 	for b.Loop() {
 		reduceFinalResult(partialLists16_100000)
+	}
+}
+
+// func Benchmark_readRegion_singleThread(b *testing.B) {
+// 	meta := must(getMeta(testParams))
+// 	for _, chunkSize := range []int64{
+// 		4 * KB,
+// 		// 16 * KB,
+// 		// 1 * MB,
+// 		4 * MB,
+// 		256 * MB,
+// 		1 * GB,
+// 	} {
+// 		b.Run(sprintSize(chunkSize), func(b *testing.B) {
+// 			for b.Loop() {
+// 				meta.ChunkSize = chunkSize
+// 				readRegion(&meta, 0)
+// 			}
+// 		})
+// 	}
+// }
+
+func sprintSize(size int64) string {
+	prec := func(v, unit int64) string {
+		return fmt.Sprintf("%.1f", float64(v*10/unit)/10.0)
+	}
+
+	if size >= GB {
+		return fmt.Sprint(prec(size, GB), "GB")
+	} else if size >= MB {
+		return fmt.Sprint(prec(size, MB), "MB")
+	} else if size >= KB {
+		return fmt.Sprint(prec(size, KB), "KB")
+	} else {
+		return fmt.Sprint(prec(size, 1), "B")
+	}
+}
+
+// func Benchmark_readRegion_multiThread(b *testing.B) {
+// 	for _, procs := range []int{
+// 		1, 4, 16, 64,
+// 	} {
+// 		b.Run(strconv.Itoa(procs), func(b *testing.B) {
+// 			params := *testParams
+// 			params.procs = procs
+// 			meta := must(getMeta(&params))
+// 			for b.Loop() {
+// 				for i := range meta.Regions {
+// 					i := i
+// 					readRegion(&meta, i)
+// 				}
+// 			}
+// 		})
+// 	}
+// }
+
+func newCyclicBytesLeakyBuffer(n, size int) chan []byte {
+	ch := make(chan []byte, n)
+	for i := 0; i < n; i++ {
+		ch <- make([]byte, size)
+	}
+	return ch
+}
+
+func Benchmark_readFileChunks(b *testing.B) {
+	meta := must(getMeta(testParams))
+	put := make(chan []byte)
+	defer close(put)
+	get := newCyclicBytesLeakyBuffer(3, GB)
+	go func() {
+		tailBuf := [32]byte{}
+		i := 0
+		for chunk := range put {
+			tailSize := min(len(chunk), len(tailBuf))
+			copy(tailBuf[:], chunk[len(chunk)-tailSize:])
+			fmt.Printf("[%d] %s\n", i, 
+				strings.ReplaceAll(string(tailBuf[:tailSize]), "\n", "\\n"))
+			i++
+			get <- chunk
+		}
+	}()
+	for b.Loop() {
+		err := readFileChunks(&meta, put, get)
+		if err != nil {
+			b.Fatalf("%+v", err)
+		}
 	}
 }

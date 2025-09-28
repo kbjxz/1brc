@@ -1,6 +1,9 @@
 package main
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 func must[T any](v T, err error) T {
 	must1(err)
@@ -13,9 +16,9 @@ func must1(err error) {
 	}
 }
 
-func assert(cond bool, expect string) {
+func assert(cond bool, expect string, args ...any) {
 	if !cond {
-		panic(expect)
+		panic(fmt.Sprintf(expect, args...))
 	}
 }
 
