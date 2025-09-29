@@ -66,10 +66,12 @@ func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (ha
 	return ret, nil
 }
 
-func sliceFile(h *handler, put chan<- fileSlice) error {
+func sliceFile(h *handler, latencies *[]time.Duration, put chan<- fileSlice) error {
 	var peekBuf [64]byte
 	var start int64
 	for {
+		beg := time.Now()
+
 		if start+h.chunkSize >= h.fileSize {
 			put <- fileSlice{start, h.fileSize}
 			break
@@ -92,6 +94,7 @@ func sliceFile(h *handler, put chan<- fileSlice) error {
 		assert(lineBreak != -1, "lineBreak not found in [%d, %d)! peek buf may be too small",
 			peekOffset, peekOffset+int64(n))
 		end := peekOffset + int64(lineBreak) + 1
+		*latencies = append(*latencies, time.Since(beg))
 		put <- fileSlice{start, end}
 
 		start = end
@@ -122,6 +125,7 @@ func readFileSlice(
 			}
 		}
 
+		beg := time.Now()
 		gotStart, err := f.Seek(fs.start, 0)
 		if err != nil {
 			return errors.Wrapf(err, "seek failed at %+v", fs)
@@ -136,6 +140,7 @@ func readFileSlice(
 		}
 		assert(int64(n) == size, "[read.n] exp: %d, got: %d, at %+v",
 			size, n, fs)
+		*latencies = append(*latencies, time.Since(beg))
 
 		put <- buf[:n]
 	}

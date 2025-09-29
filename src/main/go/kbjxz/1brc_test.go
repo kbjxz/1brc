@@ -22,7 +22,8 @@ func Test_sliceFile(t *testing.T) {
 			fileSlices = append(fileSlices, r)
 		}
 	}()
-	err = sliceFile(&h, ch)
+	var latencies []time.Duration
+	err = sliceFile(&h, &latencies, ch)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
@@ -46,17 +47,18 @@ func Test_readFileSlice(t *testing.T) {
 	}
 
 	var fromSliceToRead = make(chan fileSlice)
+	var sliceLatencies = make([]time.Duration, 0, h.fileSize/h.chunkSize+1)
 	eg, ctx := errgroup.WithContext(context.Background())
 	eg.Go(func() error {
 		defer close(fromSliceToRead)
-		return sliceFile(&h, fromSliceToRead)
+		return sliceFile(&h, &sliceLatencies, fromSliceToRead)
 	})
 
-	var latencies []time.Duration
+	var readLatencies = make([]time.Duration, 0, cap(sliceLatencies))
 	var fromReadToParse = make(chan []byte)
 	eg.Go(func() error {
 		defer close(fromReadToParse)
-		return readFileSlice(ctx, &h, &latencies, fromReadToParse, fromSliceToRead)
+		return readFileSlice(ctx, &h, &readLatencies, fromReadToParse, fromSliceToRead)
 	})
 
 	eg.Go(func() error {
@@ -69,4 +71,7 @@ func Test_readFileSlice(t *testing.T) {
 	if err := eg.Wait(); err != nil {
 		t.Fatalf("%+v", err)
 	}
+
+	t.Logf("[latency.slice] total: %v, details: %+v", sumDurations(sliceLatencies), sliceLatencies)
+	t.Logf("[latency.read] total: %v, details: %+v", sumDurations(readLatencies), readLatencies)
 }
