@@ -14,12 +14,6 @@ import (
 	"github.com/pkg/errors"
 )
 
-const (
-	KB = 1024
-	MB = 1024 * KB
-	GB = 1024 * MB
-)
-
 type fileMeta struct {
 	FileName    string
 	FileSize    int64
