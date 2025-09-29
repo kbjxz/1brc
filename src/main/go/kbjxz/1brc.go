@@ -29,7 +29,7 @@ type handler struct {
 }
 
 type fileSlice struct {
-	start, end int64
+	beg, end int64
 }
 
 func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (handler, error) {
@@ -71,17 +71,17 @@ func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (ha
 
 func sliceFile(h *handler, latencies *[]time.Duration, put chan<- fileSlice) error {
 	var peekBuf [64]byte
-	var start int64
+	var beg int64
 	for {
-		beg := time.Now()
+		start := time.Now()
 
-		if start+h.chunkSize >= h.fileSize {
-			put <- fileSlice{start, h.fileSize}
+		if beg+h.chunkSize >= h.fileSize {
+			put <- fileSlice{beg, h.fileSize}
 			break
 		}
 
 		// find last line break in possible chunk
-		var peekOffset = start + h.chunkSize - int64(len(peekBuf))
+		var peekOffset = beg + h.chunkSize - int64(len(peekBuf))
 		gotOffset, err := h.f.Seek(peekOffset, 0)
 		if err != nil {
 			return errors.Wrapf(err, "peek: %d", peekOffset)
@@ -97,10 +97,12 @@ func sliceFile(h *handler, latencies *[]time.Duration, put chan<- fileSlice) err
 		assert(lineBreak != -1, "lineBreak not found in [%d, %d)! peek buf may be too small",
 			peekOffset, peekOffset+int64(n))
 		end := peekOffset + int64(lineBreak) + 1
-		*latencies = append(*latencies, time.Since(beg))
-		put <- fileSlice{start, end}
 
-		start = end
+		*latencies = append(*latencies, time.Since(start))
+
+		put <- fileSlice{beg, end}
+
+		beg = end
 	}
 
 	return nil
@@ -128,22 +130,23 @@ func readFileSlice(
 			}
 		}
 
-		beg := time.Now()
-		gotStart, err := f.Seek(fs.start, 0)
+		start := time.Now()
+		gotStart, err := f.Seek(fs.beg, 0)
 		if err != nil {
 			return errors.Wrapf(err, "seek failed at %+v", fs)
 		}
-		assert(gotStart == fs.start, "[seek] exp: %d, got: %d", fs.start, gotStart)
+		assert(gotStart == fs.beg, "[seek] exp: %d, got: %d", fs.beg, gotStart)
 
 		buf := <-h.arena
-		size := fs.end - fs.start
+		size := fs.end - fs.beg
 		n, err := f.Read(buf[:size])
 		if err != nil {
 			return errors.Wrapf(err, "[read] failed at %+v", fs)
 		}
 		assert(int64(n) == size, "[read.n] exp: %d, got: %d, at %+v",
 			size, n, fs)
-		*latencies = append(*latencies, time.Since(beg))
+
+		*latencies = append(*latencies, time.Since(start))
 
 		put <- buf[:n]
 	}
@@ -154,7 +157,7 @@ func parseChunk(
 ) error {
 	var buf []byte
 	var ok bool
-	var tempBuf [8]byte // sign(<=1)+int(<=3)+dot(=1)+faction(1)
+	var intTemperature [8]byte // sign(<=1)+int(<=3)+dot(=1)+faction(1)
 	var result = partialResult{
 		Index:    map[string]int{},
 		Stations: []stationData{},
@@ -169,14 +172,18 @@ func parseChunk(
 			}
 		}
 
-		beg := 0
+		var start = time.Now()
+
+		var beg int = 0
 		for beg < len(buf) {
+
 			// scan city
 			stationEnd := bytes.IndexByte(buf[beg:], ';')
 			assert(stationEnd != -1, "field delimiter not found: %s", buf[:min(len(buf), 32)])
+			station := unsafe.String(&buf[beg], stationEnd-beg)
 
 			// scan temperature
-			var tempBuf = tempBuf[:0]
+			var tempBuf = intTemperature[:0]
 			var iTempSrc = stationEnd + 1
 			for {
 				if len(tempBuf) == cap(tempBuf) {
@@ -184,6 +191,7 @@ func parseChunk(
 				}
 
 				if b := buf[iTempSrc]; b == '\n' {
+					beg = iTempSrc + 1
 					break
 				} else if b == '.' {
 					iTempSrc++
@@ -198,7 +206,6 @@ func parseChunk(
 			}
 
 			// insert
-			station := unsafe.String(&buf[beg], stationEnd-beg)
 			i, ok := result.Index[station]
 			if !ok {
 				result.Stations = append(result.Stations, stationData{Station: strings.Clone(station)})
@@ -212,5 +219,57 @@ func parseChunk(
 			s.Min = min(s.Min, temp)
 			s.Max = max(s.Max, temp)
 		}
+
+		*latencies = append(*latencies, time.Since(start))
+
+		h.arena <- buf
 	}
+}
+
+type parseResult struct {
+	station     string
+	temperature int
+	advacend    int
+}
+
+func parseLine2(data []byte) (parseResult, error) {
+	var tempBuf [8]byte
+	var ret parseResult
+
+	// scan city
+	idxData := bytes.IndexByte(data, ';')
+	assert(idxData != -1, "field delimiter not found: %s", data[:min(len(data), 32)])
+	ret.station = unsafe.String(&data[0], idxData)
+
+	// scan temperature
+	idxData++
+	var idxTemp = 0
+	for idxData < len(data) {
+		if idxTemp == cap(tempBuf) {
+			beg := len(ret.station) + 0
+			end := min(len(data), beg+31)
+			return ret, errors.Errorf("temperature too long: %s", data[beg:end])
+		}
+
+		if b := data[idxData]; b == '\n' {
+			idxData++
+			break
+		} else if b == '.' {
+			idxData++
+		} else {
+			tempBuf[idxTemp] = b
+			idxTemp++
+			idxData++
+		}
+	}
+
+	var err error
+	ret.temperature, err = strconv.Atoi(unsafe.String(&tempBuf[0], idxTemp))
+	if err != nil {
+		return ret, errors.Errorf("invalid temperature: %s", tempBuf)
+	}
+
+	ret.advacend = idxData
+
+	return ret, nil
 }
