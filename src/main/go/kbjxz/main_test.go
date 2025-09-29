@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
@@ -320,12 +321,17 @@ func Test_parseChunks(t *testing.T) {
 	chunkBf := newCyclicBytesLeakyBuffer(15, GB)
 	eg, ctx := errgroup.WithContext(context.Background())
 
+	var readChunksLatencies []time.Duration
 	eg.Go(func() error {
 		defer close(chunkCh)
+		ctx = context.WithValue(ctx, latenciesKey{}, &readChunksLatencies)
 		return readFileChunks(ctx, &meta, chunkCh, chunkBf)
 	})
 
-	for i := 0; i < 1; i++ {
+	const procs = 10
+	parserLatencies := make([][]time.Duration, procs)
+	for i := 0; i < procs; i++ {
+		ctx := context.WithValue(ctx, latenciesKey{}, &parserLatencies[i])
 		eg.Go(func() (err error) {
 			_, err = parseChunks(ctx, chunkBf, chunkCh)
 			return err
@@ -343,6 +349,21 @@ func Test_parseChunks(t *testing.T) {
 			t.Fatalf("%+v", err)
 		}
 	}
+
+	t.Logf("[readChunks] total: %v, details: %+v\n",
+		sumDurations(readChunksLatencies), readChunksLatencies)
+
+	for i, ds := range parserLatencies {
+		t.Logf("[parse:%d] total %v of %d chunks\n", i, sumDurations(ds), len(ds))
+	}
+}
+
+func sumDurations(ds []time.Duration) time.Duration {
+	var total time.Duration
+	for _, v := range ds {
+		total += v
+	}
+	return total
 }
 
 func asyncWait(eg *errgroup.Group) <-chan error {

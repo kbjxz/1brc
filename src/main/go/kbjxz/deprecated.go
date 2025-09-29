@@ -69,3 +69,47 @@ func _reduceFinalResult(partialLists [][]stationData) []stationData {
 	}
 	return result
 }
+
+// func _parseRegion(meta *fileMeta, i int) ([]stationData, error) {
+// 	region := &meta.Regions[i]
+// 	f := must(os.Open(meta.FileName))
+// 	defer f.Close()
+// 	must(f.Seek(region.Start, 0))
+
+// 	regionSize := region.End - region.Start
+// 	buf := make([]byte, regionSize)
+// 	readSize, err := f.Read(buf)
+// 	if err != nil {
+// 		return nil, errors.Wrapf(err, "region:%+v", region)
+// 	}
+// 	assert(int64(readSize) == regionSize,
+// 		"[readRegion:%d] exp:%d, got: %d", i, regionSize, readSize)
+
+// 	const expSize = 50000
+// 	var (
+// 		line    []byte
+// 		partial = partialResult{
+// 			Index: make(map[string]int, expSize),
+// 			List:  make([]stationData, expSize),
+// 		}
+// 		lineBuf [8]byte
+// 		offset  = region.Start
+// 	)
+// 	for len(buf) != 0 {
+// 		line, buf = scanLine(buf)
+// 		record, err := parseLine(line, lineBuf)
+// 		if err != nil {
+// 			return nil, errors.WithMessage(err, fmt.Sprintf(
+// 				"line:%s, file_offset:%d", string(line), offset))
+// 		}
+// 		partial.insert(&record)
+// 		offset += int64(len(line))
+// 	}
+
+// 	ret := partial.List
+// 	sort.Slice(ret, func(i, j int) bool {
+// 		return ret[i].Station < ret[j].Station
+// 	})
+
+// 	return ret, nil
+// }

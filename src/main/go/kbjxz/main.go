@@ -8,11 +8,10 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"strings"
+	"time"
 	"unsafe"
 
 	"github.com/pkg/errors"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -22,40 +21,35 @@ const (
 )
 
 type fileMeta struct {
-	FileName  string
-	FileSize  int64
-	Procs     int
-	ChunkSize int64
-	BufSize   int
-	Regions   []fileRegion
-}
-
-type fileRegion struct {
-	Start, End int64 // [start, end)
+	FileName    string
+	FileSize    int64
+	Procs       int
+	ChunkSize   int64
+	TotalChunks int64
 }
 
 func main() {
-	params := must(parseArgs(os.Args))
+	// params := must(parseArgs(os.Args))
 
-	meta := must(getMeta(&params))
+	// meta := must(getMeta(&params))
 
-	// split file
-	fileReaders, ctx := errgroup.WithContext(context.Background())
-	partialLists := make([][]stationData, len(meta.Regions))
-	for i := range meta.Regions {
-		i := i
-		result := &partialLists[i]
-		fileReaders.Go(func() (err error) {
-			*result, err = _parseRegion(&meta, i)
-			return err
-		})
-	}
-	if err := fileReaders.Wait(); err != nil {
-		fmt.Printf("%+v", context.Cause(ctx))
-		return
-	}
+	// // split file
+	// fileReaders, ctx := errgroup.WithContext(context.Background())
+	// partialLists := make([][]stationData, len(meta.Regions))
+	// for i := range meta.Regions {
+	// 	i := i
+	// 	result := &partialLists[i]
+	// 	fileReaders.Go(func() (err error) {
+	// 		*result, err = _parseRegion(&meta, i)
+	// 		return err
+	// 	})
+	// }
+	// if err := fileReaders.Wait(); err != nil {
+	// 	fmt.Printf("%+v", context.Cause(ctx))
+	// 	return
+	// }
 
-	output(&meta, reduceFinalResult(partialLists))
+	// output(&meta, reduceFinalResult(partialLists))
 }
 
 type params struct {
@@ -114,37 +108,10 @@ func getMeta(p *params) (fileMeta, error) {
 	ret.FileName = p.fileName
 	ret.FileSize = (must(f.Stat()).Size())
 	ret.Procs = p.procs
-	ret.ChunkSize = ret.FileSize / int64(ret.Procs)
-	const defaultBufSize = 4 * 1024 * 1024
-	ret.BufSize = int(min(ret.ChunkSize, defaultBufSize))
-
-	ret.Regions = make([]fileRegion, ret.Procs)
-	offset := int64(0)
-	peekBuf := [128]byte{}
-	for i := 0; i < len(ret.Regions); i++ {
-		region := &ret.Regions[i]
-		region.Start = offset
-
-		if i == len(ret.Regions)-1 {
-			region.End = ret.FileSize
-			break
-		}
-
-		// search '\n' in [offset-1, (offset-1)+128)
-		offset += ret.ChunkSize
-		must(f.Seek(max(0, offset-1), 0))
-		n, err := f.Read(peekBuf[:])
-		if err != nil {
-			return ret, errors.WithStack(err)
-		}
-		lineBreak := bytes.IndexByte(peekBuf[:n], '\n')
-
-		// include '\n' in the region for easy scanline
-		assert(lineBreak != -1, "'\n' not found")
-		fmt.Printf("[region:%d] tail: %s\n", i, strings.ReplaceAll(
-			string(peekBuf[:lineBreak+1]), "\n", "\\n"))
-		offset += int64(lineBreak + 1)
-		region.End = offset
+	ret.ChunkSize = p.chunkSize
+	ret.TotalChunks = ret.FileSize / ret.ChunkSize
+	if ret.FileSize%ret.ChunkSize > 0 {
+		ret.TotalChunks++
 	}
 
 	return ret, nil
@@ -160,6 +127,8 @@ type record struct {
 	Station string
 	Temp    int
 }
+
+type latenciesKey struct{}
 
 // parseLine input: %s;%d.%1d
 func parseLine(line []byte, buf [8]byte) (record, error) {
@@ -211,50 +180,6 @@ func (pr *partialResult) insert(r *record) {
 	data.Count++
 	data.Min = min(data.Min, r.Temp)
 	data.Max = max(data.Max, r.Temp)
-}
-
-func _parseRegion(meta *fileMeta, i int) ([]stationData, error) {
-	region := &meta.Regions[i]
-	f := must(os.Open(meta.FileName))
-	defer f.Close()
-	must(f.Seek(region.Start, 0))
-
-	regionSize := region.End - region.Start
-	buf := make([]byte, regionSize)
-	readSize, err := f.Read(buf)
-	if err != nil {
-		return nil, errors.Wrapf(err, "region:%+v", region)
-	}
-	assert(int64(readSize) == regionSize,
-		"[readRegion:%d] exp:%d, got: %d", i, regionSize, readSize)
-
-	const expSize = 50000
-	var (
-		line    []byte
-		partial = partialResult{
-			Index: make(map[string]int, expSize),
-			List:  make([]stationData, expSize),
-		}
-		lineBuf [8]byte
-		offset  = region.Start
-	)
-	for len(buf) != 0 {
-		line, buf = scanLine(buf)
-		record, err := parseLine(line, lineBuf)
-		if err != nil {
-			return nil, errors.WithMessage(err, fmt.Sprintf(
-				"line:%s, file_offset:%d", string(line), offset))
-		}
-		partial.insert(&record)
-		offset += int64(len(line))
-	}
-
-	ret := partial.List
-	sort.Slice(ret, func(i, j int) bool {
-		return ret[i].Station < ret[j].Station
-	})
-
-	return ret, nil
 }
 
 func scanLine(buf []byte) (line []byte, rest []byte) {
@@ -318,8 +243,19 @@ func readFileChunks(ctx context.Context, meta *fileMeta, put chan<- []byte, get 
 		leftover = 0
 		buf      = <-get
 	)
+
+	latencies := make([]time.Duration, 0, meta.TotalChunks)
+	defer func() {
+		if d, ok := ctx.Value(latenciesKey{}).(*[]time.Duration); ok {
+			*d = latencies
+		}
+	}()
+
 	for read < meta.FileSize {
 		assert(len(buf) == GB, "[len(buf)] exp: %d, got: %d", GB, len(buf))
+
+		beg := time.Now()
+
 		n, err := f.Read(buf[leftover:])
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -343,6 +279,8 @@ func readFileChunks(ctx context.Context, meta *fileMeta, put chan<- []byte, get 
 			buf = <-get
 			leftover = 0
 		}
+
+		latencies = append(latencies, time.Since(beg))
 
 		read += int64(n)
 
@@ -369,6 +307,14 @@ func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]s
 		chunk []byte
 		ok    bool
 	)
+
+	latencies := []time.Duration{}
+	defer func() {
+		if d, ok := ctx.Value(latenciesKey{}).(*[]time.Duration); ok {
+			*d = latencies
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -379,6 +325,8 @@ func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]s
 		if !ok {
 			break
 		}
+
+		beg := time.Now()
 
 		remain := chunk
 		for len(remain) != 0 {
@@ -395,6 +343,8 @@ func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]s
 			partial.insert(&record)
 		}
 		put <- resetChunk(chunk)
+
+		latencies = append(latencies, time.Since(beg))
 	}
 
 	ret := partial.List
