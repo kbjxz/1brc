@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
+
+	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 var testParams = &params{
@@ -257,9 +261,10 @@ func Test_readFileChunks(t *testing.T) {
 	put := make(chan []byte)
 	get := newCyclicBytesLeakyBuffer(3, GB)
 	chErr := make(chan error)
+	ctx := context.Background()
 	go func() {
 		defer close(put)
-		chErr <- readFileChunks(&meta, put, get)
+		chErr <- readFileChunks(ctx, &meta, put, get)
 	}()
 
 	var (
@@ -298,13 +303,71 @@ func Benchmark_readFileChunks(b *testing.B) {
 	meta := must(getMeta(testParams))
 	put := make(chan []byte)
 	get := newCyclicBytesLeakyBuffer(3, GB)
-
+	ctx := context.Background()
 	go func() {
 		defer close(put)
-		readFileChunks(&meta, put, get)
+		readFileChunks(ctx, &meta, put, get)
 	}()
 
 	for chunk := range put {
 		get <- chunk
+	}
+}
+
+func Test_parseChunks(t *testing.T) {
+	meta := must(getMeta(testParams))
+	chunkCh := make(chan []byte)
+	chunkBf := newCyclicBytesLeakyBuffer(15, GB)
+	eg, ctx := errgroup.WithContext(context.Background())
+
+	eg.Go(func() error {
+		defer close(chunkCh)
+		return readFileChunks(ctx, &meta, chunkCh, chunkBf)
+	})
+
+	for i := 0; i < 1; i++ {
+		eg.Go(func() (err error) {
+			_, err = parseChunks(ctx, chunkBf, chunkCh)
+			return err
+		})
+	}
+
+	egCh := asyncWait(eg)
+	select {
+	case <-ctx.Done():
+		if err := context.Cause(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("%+v", err)
+		}
+	case err := <-egCh:
+		if err != nil {
+			t.Fatalf("%+v", err)
+		}
+	}
+}
+
+func asyncWait(eg *errgroup.Group) <-chan error {
+	ch := make(chan error)
+	go func() {
+		ch <- eg.Wait()
+	}()
+	return ch
+}
+
+func Test_resetChunk(t *testing.T) {
+	const Len = 1024
+	b := make([]byte, Len)
+	for _, tt := range []struct {
+		name string
+		bb   []byte
+	}{
+		{"b", b},
+		{"b[:100]", b[:100]},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resetChunk(tt.bb)
+			if len(got) != Len {
+				t.Fatalf("len")
+			}
+		})
 	}
 }

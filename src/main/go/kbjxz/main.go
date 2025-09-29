@@ -262,7 +262,7 @@ func scanLine(buf []byte) (line []byte, rest []byte) {
 	if i == -1 {
 		return buf, nil
 	}
-	return buf[:i], buf[min(len(buf), i+1):]
+	return buf[:i], buf[i+1:]
 }
 
 func (sd *stationData) String() string {
@@ -309,17 +309,18 @@ func output(meta *fileMeta, result []stationData) {
 	}
 }
 
-func readFileChunks(meta *fileMeta, put chan<- []byte, get <-chan []byte) error {
+func readFileChunks(ctx context.Context, meta *fileMeta, put chan<- []byte, get <-chan []byte) error {
 	f := must(os.Open(meta.FileName))
 	defer f.Close()
 
 	var (
-		read  = int64(0)
-		extra = 0
-		buf   = <-get
+		read     = int64(0)
+		leftover = 0
+		buf      = <-get
 	)
 	for read < meta.FileSize {
-		n, err := f.Read(buf[extra:])
+		assert(len(buf) == GB, "[len(buf)] exp: %d, got: %d", GB, len(buf))
+		n, err := f.Read(buf[leftover:])
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
@@ -330,52 +331,80 @@ func readFileChunks(meta *fileMeta, put chan<- []byte, get <-chan []byte) error 
 		lastLine := bytes.LastIndexByte(buf, '\n')
 
 		if lastLine != -1 {
-			// seek last '\n' and append extra bytes into next buf
+			// seek last '\n' and append leftover bytes into next buf
 			chunkEnd := lastLine + 1
 			nextBuf := <-get
 			copy(nextBuf, buf[chunkEnd:])
-			extra = len(buf) - chunkEnd
+			leftover = len(buf) - chunkEnd
 			put <- buf[:chunkEnd]
 			buf = nextBuf
 		} else {
 			put <- buf
 			buf = <-get
-			extra = 0
+			leftover = 0
 		}
 
 		read += int64(n)
+
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			continue
+		}
 	}
 	assert(read == meta.FileSize,
 		"[readRegion] exp: %d, got: %d", meta.FileSize, read)
 	return nil
 }
 
-// func parseChunk(meta *fileMeta, chunk []byte) ([]stationData, error) {
-// 	const expSize = 50000
-// 	var (
-// 		line    []byte
-// 		partial = partialResult{
-// 			Index: make(map[string]int, expSize),
-// 			List:  make([]stationData, expSize),
-// 		}
-// 		lineBuf [8]byte
-// 		offset  = region.Start
-// 	)
-// 	for len(buf) != 0 {
-// 		line, buf = scanLine(buf)
-// 		record, err := parseLine(line, lineBuf)
-// 		if err != nil {
-// 			return nil, errors.WithMessage(err, fmt.Sprintf(
-// 				"line:%s, file_offset:%d", string(line), offset))
-// 		}
-// 		partial.insert(&record)
-// 		offset += int64(len(line))
-// 	}
+func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]stationData, error) {
+	var (
+		line    []byte
+		lineBuf [8]byte
+		partial = partialResult{
+			Index: map[string]int{},
+			List:  make([]stationData, 0),
+		}
+		chunk []byte
+		ok    bool
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		case chunk, ok = <-get:
+		}
 
-// 	ret := partial.List
-// 	sort.Slice(ret, func(i, j int) bool {
-// 		return ret[i].Station < ret[j].Station
-// 	})
+		if !ok {
+			break
+		}
 
-// 	return ret, nil
-// }
+		remain := chunk
+		for len(remain) != 0 {
+			line, remain = scanLine(remain)
+			if len(line) == 0 {
+				continue
+			}
+
+			record, err := parseLine(line, lineBuf)
+			if err != nil {
+				return nil, errors.WithMessage(err, fmt.Sprintf("line:%s", string(line)))
+			}
+
+			partial.insert(&record)
+		}
+		put <- resetChunk(chunk)
+	}
+
+	ret := partial.List
+	sort.Slice(ret, func(i, j int) bool {
+		return ret[i].Station < ret[j].Station
+	})
+
+	return ret, nil
+}
+
+func resetChunk(b []byte) []byte {
+	return unsafe.Slice(unsafe.SliceData(b), cap(b))
+}
