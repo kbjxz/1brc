@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
+	"time"
 
 	"github.com/pkg/errors"
 )
@@ -23,7 +25,7 @@ type handler struct {
 	arena       chan []byte
 }
 
-type fileRegion struct {
+type fileSlice struct {
 	start, end int64
 }
 
@@ -64,12 +66,12 @@ func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (ha
 	return ret, nil
 }
 
-func partitionFile(h *handler, put func(fileRegion)) error {
+func sliceFile(h *handler, put chan<- fileSlice) error {
 	var peekBuf [64]byte
 	var start int64
 	for {
 		if start+h.chunkSize >= h.fileSize {
-			put(fileRegion{start, h.fileSize})
+			put <- fileSlice{start, h.fileSize}
 			break
 		}
 
@@ -90,10 +92,51 @@ func partitionFile(h *handler, put func(fileRegion)) error {
 		assert(lineBreak != -1, "lineBreak not found in [%d, %d)! peek buf may be too small",
 			peekOffset, peekOffset+int64(n))
 		end := peekOffset + int64(lineBreak) + 1
-		put(fileRegion{start, end})
+		put <- fileSlice{start, end}
 
 		start = end
 	}
 
 	return nil
+}
+
+func readFileSlice(
+	ctx context.Context, h *handler, latencies *[]time.Duration,
+	put chan<- []byte, get <-chan fileSlice) error {
+
+	f, err := os.Open(h.fileName)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	defer f.Close()
+
+	var fs fileSlice
+	var ok bool
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case fs, ok = <-get:
+			if !ok {
+				return nil
+			}
+		}
+
+		gotStart, err := f.Seek(fs.start, 0)
+		if err != nil {
+			return errors.Wrapf(err, "seek failed at %+v", fs)
+		}
+		assert(gotStart == fs.start, "[seek] exp: %d, got: %d", fs.start, gotStart)
+
+		buf := <-h.arena
+		size := fs.end -fs.start
+		n, err := f.Read(buf[:size])
+		if err != nil {
+			return errors.Wrapf(err, "[read] failed at %+v", fs)
+		}
+		assert(int64(n) == size, "[read.n] exp: %d, got: %d, at %+v",
+			size, n, fs)
+
+		put <- buf[:n]
+	}
 }
