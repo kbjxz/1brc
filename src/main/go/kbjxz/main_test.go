@@ -143,7 +143,7 @@ func Benchmark_insertRecord(b *testing.B) {
 	for b.Loop() {
 		pr := partialResult{
 			Index: make(map[string]int, 50000),
-			List:  make([]stationData, 50000),
+			Stations:  make([]stationData, 50000),
 		}
 		for i := range lineRecords2 {
 			pr.insert(&lineRecords2[i])

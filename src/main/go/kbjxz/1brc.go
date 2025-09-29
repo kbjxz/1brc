@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"strconv"
+	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pkg/errors"
 )
@@ -105,8 +108,8 @@ func sliceFile(h *handler, latencies *[]time.Duration, put chan<- fileSlice) err
 
 func readFileSlice(
 	ctx context.Context, h *handler, latencies *[]time.Duration,
-	put chan<- []byte, get <-chan fileSlice) error {
-
+	put chan<- []byte, get <-chan fileSlice,
+) error {
 	f, err := os.Open(h.fileName)
 	if err != nil {
 		return errors.WithStack(err)
@@ -133,7 +136,7 @@ func readFileSlice(
 		assert(gotStart == fs.start, "[seek] exp: %d, got: %d", fs.start, gotStart)
 
 		buf := <-h.arena
-		size := fs.end -fs.start
+		size := fs.end - fs.start
 		n, err := f.Read(buf[:size])
 		if err != nil {
 			return errors.Wrapf(err, "[read] failed at %+v", fs)
@@ -143,5 +146,71 @@ func readFileSlice(
 		*latencies = append(*latencies, time.Since(beg))
 
 		put <- buf[:n]
+	}
+}
+
+func parseChunk(
+	ctx context.Context, h *handler, latencies *[]time.Duration, get <-chan []byte,
+) error {
+	var buf []byte
+	var ok bool
+	var tempBuf [8]byte // sign(<=1)+int(<=3)+dot(=1)+faction(1)
+	var result = partialResult{
+		Index:    map[string]int{},
+		Stations: []stationData{},
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case buf, ok = <-get:
+			if !ok {
+				return nil
+			}
+		}
+
+		beg := 0
+		for beg < len(buf) {
+			// scan city
+			stationEnd := bytes.IndexByte(buf[beg:], ';')
+			assert(stationEnd != -1, "field delimiter not found: %s", buf[:min(len(buf), 32)])
+
+			// scan temperature
+			var tempBuf = tempBuf[:0]
+			var iTempSrc = stationEnd + 1
+			for {
+				if len(tempBuf) == cap(tempBuf) {
+					return errors.Errorf("temperature too long: %s", buf[iTempSrc:min(iTempSrc+16, len(buf))])
+				}
+
+				if b := buf[iTempSrc]; b == '\n' {
+					break
+				} else if b == '.' {
+					iTempSrc++
+				} else {
+					tempBuf = append(tempBuf, buf[iTempSrc])
+					iTempSrc++
+				}
+			}
+			temp, err := strconv.Atoi(unsafe.String(&tempBuf[0], len(tempBuf)))
+			if err != nil {
+				return errors.Errorf("invalid temperature: %s", tempBuf)
+			}
+
+			// insert
+			station := unsafe.String(&buf[beg], stationEnd-beg)
+			i, ok := result.Index[station]
+			if !ok {
+				result.Stations = append(result.Stations, stationData{Station: strings.Clone(station)})
+				i = len(result.Stations) - 1
+				result.Index[station] = i
+			}
+
+			s := &result.Stations[i]
+			s.Avg = (s.Avg*s.Count + temp) / (s.Count + 1)
+			s.Count++
+			s.Min = min(s.Min, temp)
+			s.Max = max(s.Max, temp)
+		}
 	}
 }

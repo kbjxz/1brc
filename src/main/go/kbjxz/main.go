@@ -158,18 +158,18 @@ func parseLine(line []byte, buf [8]byte) (record, error) {
 
 type partialResult struct {
 	Index map[string]int
-	List  []stationData
+	Stations  []stationData
 }
 
 func (pr *partialResult) insert(r *record) {
 	i, ok := pr.Index[r.Station]
 	if !ok {
-		pr.List = append(pr.List, stationData{Station: r.Station})
-		i = len(pr.List) - 1
+		pr.Stations = append(pr.Stations, stationData{Station: r.Station})
+		i = len(pr.Stations) - 1
 		pr.Index[r.Station] = i
 	}
 
-	data := &pr.List[i]
+	data := &pr.Stations[i]
 	data.Avg = (data.Avg*data.Count + r.Temp) / (data.Count + 1)
 	data.Count++
 	data.Min = min(data.Min, r.Temp)
@@ -296,7 +296,7 @@ func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]s
 		lineBuf [8]byte
 		partial = partialResult{
 			Index: map[string]int{},
-			List:  make([]stationData, 0),
+			Stations:  make([]stationData, 0),
 		}
 		chunk []byte
 		ok    bool
@@ -341,7 +341,7 @@ func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]s
 		latencies = append(latencies, time.Since(beg))
 	}
 
-	ret := partial.List
+	ret := partial.Stations
 	sort.Slice(ret, func(i, j int) bool {
 		return ret[i].Station < ret[j].Station
 	})
