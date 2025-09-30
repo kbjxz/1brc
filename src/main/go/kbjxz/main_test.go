@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
@@ -215,21 +214,7 @@ func Benchmark_reduce2(b *testing.B) {
 // 	}
 // }
 
-func sprintSize(size int64) string {
-	prec := func(v, unit int64) string {
-		return fmt.Sprintf("%.1f", float64(v*10/unit)/10.0)
-	}
 
-	if size >= GB {
-		return fmt.Sprint(prec(size, GB), "GB")
-	} else if size >= MB {
-		return fmt.Sprint(prec(size, MB), "MB")
-	} else if size >= KB {
-		return fmt.Sprint(prec(size, KB), "KB")
-	} else {
-		return fmt.Sprint(prec(size, 1), "B")
-	}
-}
 
 // func Benchmark_readRegion_multiThread(b *testing.B) {
 // 	for _, procs := range []int{

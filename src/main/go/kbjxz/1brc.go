@@ -30,6 +30,7 @@ type handler struct {
 	parseProcs int64
 	chunkSize  int64
 	arena      chan []byte
+	isDebug    bool
 }
 
 type fileSlice struct {
@@ -135,8 +136,21 @@ func run(h *handler) (result, error) {
 		return nil
 	})
 
-	if err := eg.Wait(); err != nil {
-		return result{}, err
+	wait := make(chan error)
+	go func() {
+		defer close(wait)
+		wait <- eg.Wait()
+	}()
+	select {
+	case <-ctx.Done():
+		err := context.Cause(ctx)
+		if !errors.Is(err, context.Canceled){
+			return result{}, err
+		}
+	case err := <-wait:
+		if err != nil {
+			return result{}, err
+		}
 	}
 
 	printStationDatas(h, datas)
@@ -157,6 +171,9 @@ func sliceFile(h *handler, latencies *[]time.Duration, put chan<- fileSlice) err
 
 		if beg+h.chunkSize >= h.fileSize {
 			put <- fileSlice{beg, h.fileSize}
+			if h.isDebug {
+				fmt.Printf("[sliceFile] %+v\n", fileSlice{beg, h.fileSize})
+			}
 			break
 		}
 
@@ -181,6 +198,9 @@ func sliceFile(h *handler, latencies *[]time.Duration, put chan<- fileSlice) err
 		*latencies = append(*latencies, time.Since(start))
 
 		put <- fileSlice{beg, end}
+		if h.isDebug {
+			fmt.Printf("[sliceFile] %+v\n", fileSlice{beg, h.fileSize})
+		}
 
 		beg = end
 	}
@@ -229,6 +249,10 @@ func readFileSlice(
 		*latencies = append(*latencies, time.Since(start))
 
 		put <- buf[:n]
+
+		if h.isDebug {
+			fmt.Printf("[readFile] %+v\n", fs)
+		}
 	}
 }
 
@@ -284,7 +308,11 @@ func parseChunk(
 
 		*latencies = append(*latencies, time.Since(start))
 
-		h.arena <- buf
+		if h.isDebug {
+			fmt.Printf("[parseChunk] len: %s\n", sprintSize(int64(len(buf))))
+		}
+
+		h.arena <- resetChunk(buf)
 	}
 
 	sort.Slice(result.Stations, func(i, j int) bool {
@@ -314,7 +342,7 @@ func parseLine2(data []byte) (parseResult, error) {
 	var idxTemp = 0
 	for {
 		// last line in file has no linebreak
-		if idxData < len(data) {
+		if idxData == len(data) {
 			break
 		}
 
@@ -355,7 +383,7 @@ func reduceStationDatas(
 	resultIndex := make(map[string]int)
 	result := []stationData{}
 	for {
-		partialList, status := selectRecieve(ctx, get)
+		stationDatas, status := selectReceive(ctx, get)
 		if status == canceled {
 			return nil
 		} else if status == closed {
@@ -363,23 +391,27 @@ func reduceStationDatas(
 		}
 
 		var start = time.Now()
-		for i := range partialList {
-			partialData := &partialList[i]
-			idx, ok := resultIndex[partialData.Station]
+		for i := range stationDatas {
+			v := &stationDatas[i]
+			idx, ok := resultIndex[v.Station]
 			if !ok {
 				// push partialData as initial value
-				result = append(result, *partialData)
-				resultIndex[partialData.Station] = len(result) - 1
+				result = append(result, *v)
+				resultIndex[v.Station] = len(result) - 1
 			} else {
 				// reduce
 				r := &result[idx]
-				r.Min = min(r.Min, partialData.Min)
-				r.Avg = (r.Count*r.Avg + partialData.Avg) / (r.Count + 1)
+				r.Min = min(r.Min, v.Min)
+				r.Avg = (r.Count*r.Avg + v.Avg) / (r.Count + 1)
 				r.Count += 1
-				r.Max = max(r.Max, partialData.Max)
+				r.Max = max(r.Max, v.Max)
 			}
 		}
 		(*latencies) = append((*latencies), time.Since(start))
+
+		if h.isDebug {
+			fmt.Printf("[reduce] len: %d\n", len(stationDatas))
+		}
 	}
 	return result
 }
@@ -392,7 +424,7 @@ const (
 	closed   selectRetStatus = "closed"
 )
 
-func selectRecieve[T any](ctx context.Context, ch <-chan T) (T, selectRetStatus) {
+func selectReceive[T any](ctx context.Context, ch <-chan T) (T, selectRetStatus) {
 	var v T
 	var ok bool
 	select {
@@ -409,5 +441,21 @@ func selectRecieve[T any](ctx context.Context, ch <-chan T) (T, selectRetStatus)
 func printStationDatas(h *handler, result []stationData) {
 	for _, v := range result {
 		fmt.Println(v.String())
+	}
+}
+
+func sprintSize(size int64) string {
+	prec := func(v, unit int64) string {
+		return fmt.Sprintf("%.1f", float64(v*10/unit)/10.0)
+	}
+
+	if size >= GB {
+		return fmt.Sprint(prec(size, GB), "GB")
+	} else if size >= MB {
+		return fmt.Sprint(prec(size, MB), "MB")
+	} else if size >= KB {
+		return fmt.Sprint(prec(size, KB), "KB")
+	} else {
+		return fmt.Sprint(prec(size, 1), "B")
 	}
 }

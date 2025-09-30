@@ -163,13 +163,14 @@ func Test_run(t *testing.T) {
 	const (
 		fileName  = "./measurements.txt"
 		chunkSize = 256 * MB
-		readProcs = 16
-		parseProcs = 16
+		readProcs = 64
+		parseProcs = 64
 	)
 	h, err := newHandler(fileName, chunkSize, readProcs, parseProcs)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
+	h.isDebug = true
 	
 	result, err := run(&h)
 	if err != nil {
