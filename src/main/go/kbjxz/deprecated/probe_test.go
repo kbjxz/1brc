@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/csv"
 	"hash/maphash"
+	. "kbjxz/util"
 	"os"
 	"sort"
 	"testing"
@@ -11,11 +12,11 @@ import (
 var seed = maphash.MakeSeed()
 
 func stationList() []string {
-	f := must(os.Open("weather_stations.csv"))
+	f := Must(os.Open("weather_stations.csv"))
 	defer f.Close()
 
 	csvr := csv.NewReader(f)
-	data := must(csvr.ReadAll())
+	data := Must(csvr.ReadAll())
 	ret := make([]string, len(data))
 	for i, record := range data {
 		ret[i] = record[0]

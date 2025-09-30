@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	. "kbjxz/util"
 	"os"
 	"sort"
 	"strconv"
@@ -26,11 +27,11 @@ type _record struct {
 
 func _parseLine(line []byte) (_record, error) {
 	sep := bytes.IndexByte(line, ';')
-	assert(sep != -1, "invalid record")
+	Assert(sep != -1, "invalid record")
 	ret := _record{
 		Station: string(line[:sep]),
 	}
-	must(fmt.Sscanf(string(line[sep+1:]), "%f", &ret.Temp))
+	Must(fmt.Sscanf(string(line[sep+1:]), "%f", &ret.Temp))
 	return ret, nil
 }
 
@@ -86,9 +87,9 @@ func _reduceFinalResult(partialLists [][]_stationData) []_stationData {
 
 // func _parseRegion(meta *fileMeta, i int) ([]stationData, error) {
 // 	region := &meta.Regions[i]
-// 	f := must(os.Open(meta.FileName))
+// 	f := Must(os.Open(meta.FileName))
 // 	defer f.Close()
-// 	must(f.Seek(region.Start, 0))
+// 	Must(f.Seek(region.Start, 0))
 
 // 	regionSize := region.End - region.Start
 // 	buf := make([]byte, regionSize)
@@ -185,12 +186,12 @@ func parseArgs(args []string) (_params, error) {
 }
 
 func getMeta(p *_params) (_fileMeta, error) {
-	f := must(os.Open(p.fileName))
+	f := Must(os.Open(p.fileName))
 	defer f.Close()
 
 	var ret _fileMeta
 	ret.FileName = p.fileName
-	ret.FileSize = (must(f.Stat()).Size())
+	ret.FileSize = (Must(f.Stat()).Size())
 	ret.Procs = p.procs
 	ret.ChunkSize = p.chunkSize
 	ret.TotalChunks = ret.FileSize / ret.ChunkSize
@@ -219,7 +220,7 @@ func __parseLine(line []byte, buf [8]byte) (__record, error) {
 	sep := bytes.IndexByte(line, ';')
 
 	lenFloat := len(line) - sep - 1
-	assert(
+	Assert(
 		lenFloat <= len(buf),
 		"float point too long: %s", unsafe.String(&line[sep+1], lenFloat))
 
@@ -305,7 +306,7 @@ func reduceFinalResult(partialLists [][]_stationData) []_stationData {
 
 func output(meta *_fileMeta, result []_stationData) {
 	outname := meta.FileName + ".result"
-	f := must(os.Create(outname))
+	f := Must(os.Create(outname))
 	defer f.Close()
 	for i := range result {
 		f.WriteString(result[i].String())
@@ -314,7 +315,7 @@ func output(meta *_fileMeta, result []_stationData) {
 }
 
 func readFileChunks(ctx context.Context, meta *_fileMeta, put chan<- []byte, get <-chan []byte) error {
-	f := must(os.Open(meta.FileName))
+	f := Must(os.Open(meta.FileName))
 	defer f.Close()
 
 	var (
@@ -331,7 +332,7 @@ func readFileChunks(ctx context.Context, meta *_fileMeta, put chan<- []byte, get
 	}()
 
 	for read < meta.FileSize {
-		assert(len(buf) == GB, "[len(buf)] exp: %d, got: %d", GB, len(buf))
+		Assert(len(buf) == GB, "[len(buf)] exp: %d, got: %d", GB, len(buf))
 
 		beg := time.Now()
 
@@ -370,7 +371,7 @@ func readFileChunks(ctx context.Context, meta *_fileMeta, put chan<- []byte, get
 			continue
 		}
 	}
-	assert(read == meta.FileSize,
+	Assert(read == meta.FileSize,
 		"[readRegion] exp: %d, got: %d", meta.FileSize, read)
 	return nil
 }
@@ -421,7 +422,7 @@ func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]_
 
 			partial.insert(&record)
 		}
-		put <- resetChunk(chunk)
+		put <- ResetChunk(chunk)
 
 		latencies = append(latencies, time.Since(beg))
 	}

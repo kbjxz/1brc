@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	. "kbjxz/util"
 	"math/rand"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func Test_getMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Log(render(ret))
+	t.Log(Render(ret))
 }
 
 var lineData = [][]byte{
@@ -50,7 +51,7 @@ func Benchmark_parseLine(b *testing.B) {
 			}
 		}
 	}
-	// b.Log(render(record))
+	// b.Log(Render(record))
 }
 
 func Benchmark_parseLine2(b *testing.B) {
@@ -65,7 +66,7 @@ func Benchmark_parseLine2(b *testing.B) {
 			}
 		}
 	}
-	// b.Log(render(record))
+	// b.Log(Render(record))
 }
 
 func Test_parseLine2(t *testing.T) {
@@ -78,7 +79,7 @@ func Test_parseLine2(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Log(render(record))
+	t.Log(Render(record))
 }
 
 func Test_scanLines(t *testing.T) {
@@ -133,7 +134,7 @@ var lineRecords2 = func() []__record {
 	record := make([]__record, len(lineData))
 	var buf [8]byte
 	for i := range lineData {
-		record[i] = must(__parseLine(lineData[i], buf))
+		record[i] = Must(__parseLine(lineData[i], buf))
 	}
 	return record
 }()
@@ -141,8 +142,8 @@ var lineRecords2 = func() []__record {
 func Benchmark_insertRecord(b *testing.B) {
 	for b.Loop() {
 		pr := __partialResult{
-			Index: make(map[string]int, 50000),
-			Stations:  make([]_stationData, 50000),
+			Index:    make(map[string]int, 50000),
+			Stations: make([]_stationData, 50000),
 		}
 		for i := range lineRecords2 {
 			pr.insert(&lineRecords2[i])
@@ -166,7 +167,7 @@ func makePartialLists(par, size int) [][]_stationData {
 		lineData := makeLineData2(size)
 		plist := make([]_stationData, len(lineData))
 		for i, b := range lineData {
-			r := must(__parseLine(b, buf))
+			r := Must(__parseLine(b, buf))
 			plist[i] = _stationData{
 				Station: r.Station,
 				Count:   1,
@@ -196,7 +197,7 @@ func Benchmark_reduce2(b *testing.B) {
 }
 
 // func Benchmark_readRegion_singleThread(b *testing.B) {
-// 	meta := must(getMeta(testParams))
+// 	meta := Must(getMeta(testParams))
 // 	for _, chunkSize := range []int64{
 // 		4 * KB,
 // 		// 16 * KB,
@@ -214,8 +215,6 @@ func Benchmark_reduce2(b *testing.B) {
 // 	}
 // }
 
-
-
 // func Benchmark_readRegion_multiThread(b *testing.B) {
 // 	for _, procs := range []int{
 // 		1, 4, 16, 64,
@@ -223,7 +222,7 @@ func Benchmark_reduce2(b *testing.B) {
 // 		b.Run(strconv.Itoa(procs), func(b *testing.B) {
 // 			params := *testParams
 // 			params.procs = procs
-// 			meta := must(getMeta(&params))
+// 			meta := Must(getMeta(&params))
 // 			for b.Loop() {
 // 				for i := range meta.Regions {
 // 					i := i
@@ -243,7 +242,7 @@ func newCyclicBytesLeakyBuffer(n, size int) chan []byte {
 }
 
 func Test_readFileChunks(t *testing.T) {
-	meta := must(getMeta(testParams))
+	meta := Must(getMeta(testParams))
 	put := make(chan []byte)
 	get := newCyclicBytesLeakyBuffer(3, GB)
 	chErr := make(chan error)
@@ -286,7 +285,7 @@ func Test_readFileChunks(t *testing.T) {
 }
 
 func Benchmark_readFileChunks(b *testing.B) {
-	meta := must(getMeta(testParams))
+	meta := Must(getMeta(testParams))
 	put := make(chan []byte)
 	get := newCyclicBytesLeakyBuffer(3, GB)
 	ctx := context.Background()
@@ -301,7 +300,7 @@ func Benchmark_readFileChunks(b *testing.B) {
 }
 
 func Test_parseChunks(t *testing.T) {
-	meta := must(getMeta(testParams))
+	meta := Must(getMeta(testParams))
 	chunkCh := make(chan []byte)
 	chunkBf := newCyclicBytesLeakyBuffer(15, GB)
 	eg, ctx := errgroup.WithContext(context.Background())
@@ -336,19 +335,11 @@ func Test_parseChunks(t *testing.T) {
 	}
 
 	t.Logf("[readChunks] total: %v, details: %+v\n",
-		sumDurations(readChunksLatencies), readChunksLatencies)
+		SumDurations(readChunksLatencies), readChunksLatencies)
 
 	for i, ds := range parserLatencies {
-		t.Logf("[parse:%d] total %v of %d chunks\n", i, sumDurations(ds), len(ds))
+		t.Logf("[parse:%d] total %v of %d chunks\n", i, SumDurations(ds), len(ds))
 	}
-}
-
-func sumDurations(ds []time.Duration) time.Duration {
-	var total time.Duration
-	for _, v := range ds {
-		total += v
-	}
-	return total
 }
 
 func asyncWait(eg *errgroup.Group) <-chan error {
@@ -370,7 +361,7 @@ func Test_resetChunk(t *testing.T) {
 		{"b[:100]", b[:100]},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resetChunk(tt.bb)
+			got := ResetChunk(tt.bb)
 			if len(got) != Len {
 				t.Fatalf("len")
 			}

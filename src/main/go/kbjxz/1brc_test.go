@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	. "kbjxz/util"
 	"reflect"
 	"strings"
 	"testing"
@@ -75,8 +76,8 @@ func Test_readFileSlice(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 
-	t.Logf("[latency.slice] total: %v, details: %+v", sumDurations(sliceLatencies), sliceLatencies)
-	t.Logf("[latency.read] total: %v, details: %+v", sumDurations(readLatencies), readLatencies)
+	t.Logf("[latency.slice] total: %v, details: %+v", SumDurations(sliceLatencies), sliceLatencies)
+	t.Logf("[latency.read] total: %v, details: %+v", SumDurations(readLatencies), readLatencies)
 }
 
 func Test_parseChunk(t *testing.T) {
@@ -128,7 +129,7 @@ Kakata;86.2`)
 
 	t.Logf("%+v", <-put)
 
-	t.Logf("[latency.parse] total: %v, details: %+v", sumDurations(parseLatencies), parseLatencies)
+	t.Logf("[latency.parse] total: %v, details: %+v", SumDurations(parseLatencies), parseLatencies)
 }
 
 func Test_parseLine2_(t *testing.T) {

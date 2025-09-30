@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	. "kbjxz/util"
 	"os"
 	"sort"
 	"strconv"
@@ -14,12 +15,6 @@ import (
 
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
-)
-
-const (
-	KB = 1024
-	MB = 1024 * KB
-	GB = 1024 * MB
 )
 
 type handler struct {
@@ -57,8 +52,8 @@ func (sd *stationData2) String() string {
 }
 
 func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (handler, error) {
-	assert(readProcs > 0, "[readprocs] exp > 0, got: %d", readProcs)
-	assert(parseProcs > 0, "[parseprocs] exp > 0, got: %d", parseProcs)
+	Assert(readProcs > 0, "[readprocs] exp > 0, got: %d", readProcs)
+	Assert(parseProcs > 0, "[parseprocs] exp > 0, got: %d", parseProcs)
 
 	var ret = handler{
 		fileName:   fileName,
@@ -83,7 +78,7 @@ func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (ha
 
 	// calc total number of chunks
 	const maxReadBytes = 1 * GB
-	assert(0 < chunkSize && chunkSize <= maxReadBytes, "invalid chunk size")
+	Assert(0 < chunkSize && chunkSize <= maxReadBytes, "invalid chunk size")
 	ret.chunkSize = chunkSize
 
 	for i := 0; i < readProcs+1; i++ {
@@ -205,7 +200,7 @@ func sliceFile(h *handler, latencies *[]time.Duration, put chan<- fileSlice) err
 		if err != nil {
 			return errors.Wrapf(err, "peek: %d", peekOffset)
 		}
-		assert(gotOffset == peekOffset, "[peek] exp: %d, got: %d", peekOffset, gotOffset)
+		Assert(gotOffset == peekOffset, "[peek] exp: %d, got: %d", peekOffset, gotOffset)
 
 		n, err := h.f.Read(peekBuf[:])
 		if err != nil {
@@ -213,7 +208,7 @@ func sliceFile(h *handler, latencies *[]time.Duration, put chan<- fileSlice) err
 		}
 
 		lineBreak := bytes.LastIndexByte(peekBuf[:n], '\n')
-		assert(lineBreak != -1, "lineBreak not found in [%d, %d)! peek buf may be too small",
+		Assert(lineBreak != -1, "lineBreak not found in [%d, %d)! peek buf may be too small",
 			peekOffset, peekOffset+int64(n))
 		end := peekOffset + int64(lineBreak) + 1
 
@@ -254,7 +249,7 @@ func readFileSlice(
 		if err != nil {
 			return errors.Wrapf(err, "[read] failed at %+v", fs)
 		}
-		assert(int64(n) == size, "[read.n] exp: %d, got: %d, at %+v",
+		Assert(int64(n) == size, "[read.n] exp: %d, got: %d, at %+v",
 			size, n, fs)
 
 		*latencies = append(*latencies, time.Since(start))
@@ -323,7 +318,7 @@ func parseChunk(
 			fmt.Printf("[parseChunk] len: %s\n", sprintSize(int64(len(buf))))
 		}
 
-		h.arena <- resetChunk(buf)
+		h.arena <- ResetChunk(buf)
 	}
 
 	put <- result.Stations
@@ -342,7 +337,7 @@ func parseLine(data []byte) (parseResult, error) {
 
 	// scan city
 	idxData := bytes.IndexByte(data, ';')
-	assert(idxData != -1, "field delimiter not found: %s", data[:min(len(data), 32)])
+	Assert(idxData != -1, "field delimiter not found: %s", data[:min(len(data), 32)])
 	ret.station = unsafe.String(&data[0], idxData)
 
 	// scan temperature
@@ -421,11 +416,11 @@ func reduceStationDatas(
 			fmt.Printf("[reduce] len: %d\n", len(stationDatas))
 		}
 	}
-	
-	sort.Slice(result, func(i, j int) bool{
+
+	sort.Slice(result, func(i, j int) bool {
 		return result[i].Station < result[j].Station
 	})
-	
+
 	return result
 }
 
@@ -471,8 +466,4 @@ func sprintSize(size int64) string {
 	} else {
 		return fmt.Sprint(prec(size, 1), "B")
 	}
-}
-
-func resetChunk(b []byte) []byte {
-	return unsafe.Slice(unsafe.SliceData(b), cap(b))
 }
