@@ -79,17 +79,8 @@ func Test_readFileSlice(t *testing.T) {
 }
 
 func Test_parseChunk(t *testing.T) {
-	var ctx = context.Background()
-	var h = handler{
-		arena: make(chan []byte, 1),
-	}
-	var eg errgroup.Group
-	var ch = make(chan []byte)
-	var parseLatencies = []time.Duration{}
-	eg.Go(func() error {
-		return parseChunk(ctx, &h, &parseLatencies, ch)
-	})
-	ch <- []byte(`Gagarin Shahri;58.2
+	var get = make(chan []byte, 1)
+	get <- []byte(`Gagarin Shahri;58.2
 Miracema;-71.3
 Sárospatak;56.7
 Oxford;-79.9
@@ -116,10 +107,25 @@ Ertil;83.3
 General Viamonte;46.8
 Meiningen;-62.0
 Kakata;86.2`)
+	close(get)
+
+	var ctx = context.Background()
+	var h = handler{
+		arena: make(chan []byte, 1),
+	}
+	var eg errgroup.Group
+	var parseLatencies = []time.Duration{}
+	var put = make(chan []stationData, 1)
+	eg.Go(func() error {
+		defer close(put)
+		return parseChunk(ctx, &h, &parseLatencies, put, get)
+	})
 
 	if err := eg.Wait(); err != nil {
 		t.Fatalf("%+v", err)
 	}
+	
+	t.Logf("%+v", <-put)
 
 	t.Logf("[latency.parse] total: %v, details: %+v", sumDurations(parseLatencies), parseLatencies)
 }

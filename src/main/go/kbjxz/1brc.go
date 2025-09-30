@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -153,77 +154,65 @@ func readFileSlice(
 }
 
 func parseChunk(
-	ctx context.Context, h *handler, latencies *[]time.Duration, get <-chan []byte,
+	ctx context.Context, h *handler, latencies *[]time.Duration, 
+	put chan<- []stationData, get <-chan []byte,
 ) error {
 	var buf []byte
 	var ok bool
-	var intTemperature [8]byte // sign(<=1)+int(<=3)+dot(=1)+faction(1)
 	var result = partialResult{
 		Index:    map[string]int{},
 		Stations: []stationData{},
 	}
+	var shouldBreak = false
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case buf, ok = <-get:
-			if !ok {
-				return nil
-			}
+			shouldBreak = !ok	
+		}
+		
+		if shouldBreak {
+			break
 		}
 
 		var start = time.Now()
-
-		var beg int = 0
-		for beg < len(buf) {
-
-			// scan city
-			stationEnd := bytes.IndexByte(buf[beg:], ';')
-			assert(stationEnd != -1, "field delimiter not found: %s", buf[:min(len(buf), 32)])
-			station := unsafe.String(&buf[beg], stationEnd-beg)
-
-			// scan temperature
-			var tempBuf = intTemperature[:0]
-			var iTempSrc = stationEnd + 1
-			for {
-				if len(tempBuf) == cap(tempBuf) {
-					return errors.Errorf("temperature too long: %s", buf[iTempSrc:min(iTempSrc+16, len(buf))])
-				}
-
-				if b := buf[iTempSrc]; b == '\n' {
-					beg = iTempSrc + 1
-					break
-				} else if b == '.' {
-					iTempSrc++
-				} else {
-					tempBuf = append(tempBuf, buf[iTempSrc])
-					iTempSrc++
-				}
-			}
-			temp, err := strconv.Atoi(unsafe.String(&tempBuf[0], len(tempBuf)))
+		for data := buf; len(data) > 0; {
+			pr, err := parseLine2(data)
 			if err != nil {
-				return errors.Errorf("invalid temperature: %s", tempBuf)
+				return err
 			}
 
 			// insert
-			i, ok := result.Index[station]
+			i, ok := result.Index[pr.station]
 			if !ok {
-				result.Stations = append(result.Stations, stationData{Station: strings.Clone(station)})
+				result.Stations = append(result.Stations, stationData{
+					Station: strings.Clone(pr.station),
+				})
 				i = len(result.Stations) - 1
-				result.Index[station] = i
+				result.Index[pr.station] = i
 			}
 
 			s := &result.Stations[i]
-			s.Avg = (s.Avg*s.Count + temp) / (s.Count + 1)
+			s.Avg = (s.Avg*s.Count + pr.temperature) / (s.Count + 1)
 			s.Count++
-			s.Min = min(s.Min, temp)
-			s.Max = max(s.Max, temp)
+			s.Min = min(s.Min, pr.temperature)
+			s.Max = max(s.Max, pr.temperature)
+			
+			// advance	
+			data = data[pr.advacend:]
 		}
 
 		*latencies = append(*latencies, time.Since(start))
 
 		h.arena <- buf
 	}
+	
+	sort.Slice(result.Stations, func(i, j int) bool {
+		return result.Stations[i].Station < result.Stations[j].Station
+	})
+	put <- result.Stations
+	return nil
 }
 
 type parseResult struct {
