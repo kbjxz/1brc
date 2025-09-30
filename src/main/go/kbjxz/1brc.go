@@ -220,12 +220,6 @@ func readFileSlice(
 	ctx context.Context, h *handler, latencies *[]time.Duration,
 	put chan<- []byte, get <-chan fileSlice,
 ) error {
-	f, err := os.Open(h.fileName)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-	defer f.Close()
-
 	var fs fileSlice
 	var ok bool
 	for {
@@ -239,15 +233,10 @@ func readFileSlice(
 		}
 
 		start := time.Now()
-		gotStart, err := f.Seek(fs.beg, 0)
-		if err != nil {
-			return errors.Wrapf(err, "seek failed at %+v", fs)
-		}
-		assert(gotStart == fs.beg, "[seek] exp: %d, got: %d", fs.beg, gotStart)
 
 		buf := <-h.arena
 		size := fs.end - fs.beg
-		n, err := f.Read(buf[:size])
+		n, err := h.f.ReadAt(buf[:size], fs.beg)
 		if err != nil {
 			return errors.Wrapf(err, "[read] failed at %+v", fs)
 		}
