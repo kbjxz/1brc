@@ -116,7 +116,7 @@ Kakata;86.2`)
 	}
 	var eg errgroup.Group
 	var parseLatencies = []time.Duration{}
-	var put = make(chan []stationData, 1)
+	var put = make(chan []stationData2, 1)
 	eg.Go(func() error {
 		defer close(put)
 		return parseChunk(ctx, &h, &parseLatencies, put, get)
@@ -146,7 +146,7 @@ func Test_parseLine2_(t *testing.T) {
 	var got = []parseResult{}
 
 	for len(data) > 0 {
-		pr, err := parseLine2(data)
+		pr, err := parseLine(data)
 		if err != nil {
 			t.Fatalf("%+v", err)
 		}

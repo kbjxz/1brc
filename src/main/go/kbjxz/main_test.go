@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var testParams = &params{
+var testParams = &_params{
 	fileName:  "./measurements.txt",
 	procs:     1,
 	chunkSize: 1 * GB,
@@ -54,12 +54,12 @@ func Benchmark_parseLine(b *testing.B) {
 }
 
 func Benchmark_parseLine2(b *testing.B) {
-	record := make([]record, len(lineData))
+	record := make([]__record, len(lineData))
 	var buf [8]byte
 	for b.Loop() {
 		for i := range lineData {
 			var err error
-			record[i], err = parseLine(lineData[i], buf)
+			record[i], err = __parseLine(lineData[i], buf)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -69,11 +69,11 @@ func Benchmark_parseLine2(b *testing.B) {
 }
 
 func Test_parseLine2(t *testing.T) {
-	record := make([]record, len(lineData))
+	record := make([]__record, len(lineData))
 	var buf [8]byte
 	for i := range lineData {
 		var err error
-		record[i], err = parseLine(lineData[i], buf)
+		record[i], err = __parseLine(lineData[i], buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,21 +128,21 @@ func makeLineData2(size int) [][]byte {
 	return ret
 }
 
-var lineRecords2 = func() []record {
+var lineRecords2 = func() []__record {
 	lineData := makeLineData2(100000)
-	record := make([]record, len(lineData))
+	record := make([]__record, len(lineData))
 	var buf [8]byte
 	for i := range lineData {
-		record[i] = must(parseLine(lineData[i], buf))
+		record[i] = must(__parseLine(lineData[i], buf))
 	}
 	return record
 }()
 
 func Benchmark_insertRecord(b *testing.B) {
 	for b.Loop() {
-		pr := partialResult{
+		pr := __partialResult{
 			Index: make(map[string]int, 50000),
-			Stations:  make([]stationData, 50000),
+			Stations:  make([]_stationData, 50000),
 		}
 		for i := range lineRecords2 {
 			pr.insert(&lineRecords2[i])
@@ -159,15 +159,15 @@ func Benchmark_insertRecord2(b *testing.B) {
 	}
 }
 
-func makePartialLists(par, size int) [][]stationData {
+func makePartialLists(par, size int) [][]_stationData {
 	var buf [8]byte
-	ret := make([][]stationData, par)
+	ret := make([][]_stationData, par)
 	for i := range ret {
 		lineData := makeLineData2(size)
-		plist := make([]stationData, len(lineData))
+		plist := make([]_stationData, len(lineData))
 		for i, b := range lineData {
-			r := must(parseLine(b, buf))
-			plist[i] = stationData{
+			r := must(__parseLine(b, buf))
+			plist[i] = _stationData{
 				Station: r.Station,
 				Count:   1,
 				Min:     r.Temp,

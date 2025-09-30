@@ -14,6 +14,11 @@ import (
 	"github.com/pkg/errors"
 )
 
+type __partialResult struct {
+	Index    map[string]int
+	Stations []_stationData
+}
+
 type _record struct {
 	Station string
 	Temp    float32
@@ -29,9 +34,9 @@ func _parseLine(line []byte) (_record, error) {
 	return ret, nil
 }
 
-type _partialResult map[string]stationData
+type _partialResult map[string]_stationData
 
-func (pr _partialResult) insert(r *record) {
+func (pr _partialResult) insert(r *__record) {
 	data, _ := pr[r.Station]
 	data.Avg = (data.Avg*data.Count + r.Temp) / (data.Count + 1)
 	data.Count++
@@ -40,14 +45,14 @@ func (pr _partialResult) insert(r *record) {
 	pr[r.Station] = data
 }
 
-func _reduceFinalResult(partialLists [][]stationData) []stationData {
+func _reduceFinalResult(partialLists [][]_stationData) []_stationData {
 	var totalLen int
 	for _, list := range partialLists {
 		totalLen += len(list)
 	}
 	avgLen := totalLen / len(partialLists)
 	resultIndex := make(map[string]int, avgLen)
-	result := make([]stationData, 0, avgLen)
+	result := make([]_stationData, 0, avgLen)
 	end := len(partialLists)
 	for end > 0 {
 		for i := 0; i < end; i++ {
@@ -123,8 +128,7 @@ func _reduceFinalResult(partialLists [][]stationData) []stationData {
 // 	return ret, nil
 // }
 
-
-type fileMeta struct {
+type _fileMeta struct {
 	FileName    string
 	FileSize    int64
 	Procs       int
@@ -132,14 +136,14 @@ type fileMeta struct {
 	TotalChunks int64
 }
 
-type params struct {
+type _params struct {
 	fileName  string
 	procs     int
 	chunkSize int64
 }
 
-func parseArgs(args []string) (params, error) {
-	p := params{
+func parseArgs(args []string) (_params, error) {
+	p := _params{
 		procs:     1,
 		chunkSize: 1024 * MB,
 	}
@@ -147,13 +151,13 @@ func parseArgs(args []string) (params, error) {
 		return p, errors.New("missing filename")
 	}
 
-	parsers := []func(string, *params) error{
-		func(string, *params) error { return nil },
-		func(v string, p *params) error {
+	parsers := []func(string, *_params) error{
+		func(string, *_params) error { return nil },
+		func(v string, p *_params) error {
 			p.fileName = v
 			return nil
 		},
-		func(v string, p *params) error {
+		func(v string, p *_params) error {
 			procs, err := strconv.Atoi(args[2])
 			if err != nil {
 				return errors.WithStack(err)
@@ -161,7 +165,7 @@ func parseArgs(args []string) (params, error) {
 			p.procs = procs
 			return nil
 		},
-		func(v string, p *params) error {
+		func(v string, p *_params) error {
 			chunkSize, err := strconv.Atoi(args[3])
 			if err != nil {
 				return errors.WithStack(err)
@@ -180,11 +184,11 @@ func parseArgs(args []string) (params, error) {
 	return p, nil
 }
 
-func getMeta(p *params) (fileMeta, error) {
+func getMeta(p *_params) (_fileMeta, error) {
 	f := must(os.Open(p.fileName))
 	defer f.Close()
 
-	var ret fileMeta
+	var ret _fileMeta
 	ret.FileName = p.fileName
 	ret.FileSize = (must(f.Stat()).Size())
 	ret.Procs = p.procs
@@ -197,21 +201,21 @@ func getMeta(p *params) (fileMeta, error) {
 	return ret, nil
 }
 
-type stationData struct {
+type _stationData struct {
 	Station       string
 	Count         int
 	Min, Max, Avg int
 }
 
-type record struct {
+type __record struct {
 	Station string
 	Temp    int
 }
 
 type latenciesKey struct{}
 
-// parseLine input: %s;%d.%1d
-func parseLine(line []byte, buf [8]byte) (record, error) {
+// __parseLine input: %s;%d.%1d
+func __parseLine(line []byte, buf [8]byte) (__record, error) {
 	sep := bytes.IndexByte(line, ';')
 
 	lenFloat := len(line) - sep - 1
@@ -232,21 +236,20 @@ func parseLine(line []byte, buf [8]byte) (record, error) {
 	}
 	temp, err := strconv.Atoi(unsafe.String(&buf[0], iBuf))
 	if err != nil {
-		return record{}, errors.Wrap(err, unsafe.String(&line[0], len(line)))
+		return __record{}, errors.Wrap(err, unsafe.String(&line[0], len(line)))
 	}
 
-	ret := record{
+	ret := __record{
 		Station: unsafe.String(&line[0], sep),
 		Temp:    temp,
 	}
 	return ret, nil
 }
 
-
-func (pr *partialResult) insert(r *record) {
+func (pr *__partialResult) insert(r *__record) {
 	i, ok := pr.Index[r.Station]
 	if !ok {
-		pr.Stations = append(pr.Stations, stationData{Station: r.Station})
+		pr.Stations = append(pr.Stations, _stationData{Station: r.Station})
 		i = len(pr.Stations) - 1
 		pr.Index[r.Station] = i
 	}
@@ -266,19 +269,19 @@ func scanLine(buf []byte) (line []byte, rest []byte) {
 	return buf[:i], buf[i+1:]
 }
 
-func (sd *stationData) String() string {
+func (sd *_stationData) String() string {
 	return fmt.Sprintf("%s=%.1f/%.1f/%.1f", sd.Station,
 		float32(sd.Min)/10.0, float32(sd.Avg)/10.0, float32(sd.Max)/10.0)
 }
 
-func reduceFinalResult(partialLists [][]stationData) []stationData {
+func reduceFinalResult(partialLists [][]_stationData) []_stationData {
 	var totalLen int
 	for _, list := range partialLists {
 		totalLen += len(list)
 	}
 	avgLen := totalLen / len(partialLists)
 	resultIndex := make(map[string]int, avgLen)
-	result := make([]stationData, 0, avgLen)
+	result := make([]_stationData, 0, avgLen)
 	for _, partialList := range partialLists {
 		for i := range partialList {
 			partialData := &partialList[i]
@@ -300,7 +303,7 @@ func reduceFinalResult(partialLists [][]stationData) []stationData {
 	return result
 }
 
-func output(meta *fileMeta, result []stationData) {
+func output(meta *_fileMeta, result []_stationData) {
 	outname := meta.FileName + ".result"
 	f := must(os.Create(outname))
 	defer f.Close()
@@ -310,7 +313,7 @@ func output(meta *fileMeta, result []stationData) {
 	}
 }
 
-func readFileChunks(ctx context.Context, meta *fileMeta, put chan<- []byte, get <-chan []byte) error {
+func readFileChunks(ctx context.Context, meta *_fileMeta, put chan<- []byte, get <-chan []byte) error {
 	f := must(os.Open(meta.FileName))
 	defer f.Close()
 
@@ -372,13 +375,13 @@ func readFileChunks(ctx context.Context, meta *fileMeta, put chan<- []byte, get 
 	return nil
 }
 
-func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]stationData, error) {
+func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]_stationData, error) {
 	var (
 		line    []byte
 		lineBuf [8]byte
-		partial = partialResult{
+		partial = __partialResult{
 			Index:    map[string]int{},
-			Stations: make([]stationData, 0),
+			Stations: make([]_stationData, 0),
 		}
 		chunk []byte
 		ok    bool
@@ -411,7 +414,7 @@ func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]s
 				continue
 			}
 
-			record, err := parseLine(line, lineBuf)
+			record, err := __parseLine(line, lineBuf)
 			if err != nil {
 				return nil, errors.WithMessage(err, fmt.Sprintf("line:%s", string(line)))
 			}
@@ -430,4 +433,3 @@ func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]s
 
 	return ret, nil
 }
-

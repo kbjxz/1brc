@@ -37,9 +37,23 @@ type fileSlice struct {
 	beg, end int64
 }
 
-type partialResult struct {
+type partialResult2 struct {
 	Index    map[string]int
-	Stations []stationData
+	Stations []stationData2
+}
+
+type stationData2 struct {
+	Station  string
+	Count    int
+	Total    int
+	Min, Max int
+}
+
+func (sd *stationData2) String() string {
+	return fmt.Sprintf("%s=%.1f/%.1f/%.1f", sd.Station,
+		float32(sd.Min)/10.0,
+		float64(sd.Total)/float64(sd.Count)/10.0,
+		float32(sd.Max)/10.0)
 }
 
 func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (handler, error) {
@@ -80,7 +94,7 @@ func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (ha
 }
 
 type result struct {
-	datas          []stationData
+	datas          []stationData2
 	sliceLatencies []time.Duration
 	readLatencies  [][]time.Duration
 	parseLatencies [][]time.Duration
@@ -119,7 +133,7 @@ func run(h *handler) (result, error) {
 	var parseWg sync.WaitGroup
 	parseWg.Add(int(h.parseProcs))
 	var parseLatencies = make([][]time.Duration, int(h.parseProcs))
-	var reduceCh = make(chan []stationData)
+	var reduceCh = make(chan []stationData2)
 	for i := 0; i < int(h.parseProcs); i++ {
 		latencies := &parseLatencies[i]
 		*latencies = make([]time.Duration, 0, latenciesCount)
@@ -135,7 +149,7 @@ func run(h *handler) (result, error) {
 	})
 
 	var mergeLatencies = make([]time.Duration, 0, latenciesCount)
-	var datas []stationData
+	var datas []stationData2
 	eg.Go(func() error {
 		datas = reduceStationDatas(ctx, h, &mergeLatencies, reduceCh)
 		return nil
@@ -255,13 +269,13 @@ func readFileSlice(
 
 func parseChunk(
 	ctx context.Context, h *handler, latencies *[]time.Duration,
-	put chan<- []stationData, get <-chan []byte,
+	put chan<- []stationData2, get <-chan []byte,
 ) error {
 	var buf []byte
 	var ok bool
-	var result = partialResult{
+	var result = partialResult2{
 		Index:    map[string]int{},
-		Stations: []stationData{},
+		Stations: []stationData2{},
 	}
 	var shouldBreak = false
 	for {
@@ -278,29 +292,29 @@ func parseChunk(
 
 		var start = time.Now()
 		for data := buf; len(data) > 0; {
-			pr, err := parseLine2(data)
+			v, err := parseLine(data)
 			if err != nil {
 				return err
 			}
 
 			// insert
-			i, ok := result.Index[pr.station]
+			i, ok := result.Index[v.station]
 			if !ok {
-				result.Stations = append(result.Stations, stationData{
-					Station: strings.Clone(pr.station),
+				result.Stations = append(result.Stations, stationData2{
+					Station: strings.Clone(v.station),
 				})
 				i = len(result.Stations) - 1
-				result.Index[pr.station] = i
+				result.Index[v.station] = i
 			}
 
 			s := &result.Stations[i]
-			s.Avg = (s.Avg*s.Count + pr.temperature) / (s.Count + 1)
+			s.Total += v.temperature
 			s.Count++
-			s.Min = min(s.Min, pr.temperature)
-			s.Max = max(s.Max, pr.temperature)
+			s.Min = min(s.Min, v.temperature)
+			s.Max = max(s.Max, v.temperature)
 
 			// advance
-			data = data[pr.advacend:]
+			data = data[v.advacend:]
 		}
 
 		*latencies = append(*latencies, time.Since(start))
@@ -312,9 +326,6 @@ func parseChunk(
 		h.arena <- resetChunk(buf)
 	}
 
-	sort.Slice(result.Stations, func(i, j int) bool {
-		return result.Stations[i].Station < result.Stations[j].Station
-	})
 	put <- result.Stations
 	return nil
 }
@@ -325,7 +336,7 @@ type parseResult struct {
 	advacend    int
 }
 
-func parseLine2(data []byte) (parseResult, error) {
+func parseLine(data []byte) (parseResult, error) {
 	var tempBuf [8]byte
 	var ret parseResult
 
@@ -375,10 +386,10 @@ func parseLine2(data []byte) (parseResult, error) {
 }
 
 func reduceStationDatas(
-	ctx context.Context, h *handler, latencies *[]time.Duration, get <-chan []stationData,
-) []stationData {
-	resultIndex := make(map[string]int)
-	result := []stationData{}
+	ctx context.Context, h *handler, latencies *[]time.Duration, get <-chan []stationData2,
+) []stationData2 {
+	var resultIndex = make(map[string]int)
+	var result = []stationData2{}
 	for {
 		stationDatas, status := selectReceive(ctx, get)
 		if status == canceled {
@@ -399,7 +410,7 @@ func reduceStationDatas(
 				// reduce
 				r := &result[idx]
 				r.Min = min(r.Min, v.Min)
-				r.Avg = (r.Count*r.Avg + v.Avg) / (r.Count + 1)
+				r.Total += r.Total
 				r.Count += 1
 				r.Max = max(r.Max, v.Max)
 			}
@@ -410,6 +421,11 @@ func reduceStationDatas(
 			fmt.Printf("[reduce] len: %d\n", len(stationDatas))
 		}
 	}
+	
+	sort.Slice(result, func(i, j int) bool{
+		return result[i].Station < result[j].Station
+	})
+	
 	return result
 }
 
@@ -435,7 +451,7 @@ func selectReceive[T any](ctx context.Context, ch <-chan T) (T, selectRetStatus)
 	}
 }
 
-func printStationDatas(h *handler, result []stationData) {
+func printStationDatas(h *handler, result []stationData2) {
 	for _, v := range result {
 		fmt.Println(v.String())
 	}
