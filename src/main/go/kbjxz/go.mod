@@ -7,4 +7,4 @@ require (
 	golang.org/x/sync v0.17.0
 )
 
-require github.com/bytedance/gg v1.1.0 // indirect
+require github.com/bytedance/gg v1.1.0

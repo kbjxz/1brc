@@ -125,7 +125,7 @@ Kakata;86.2`)
 	if err := eg.Wait(); err != nil {
 		t.Fatalf("%+v", err)
 	}
-	
+
 	t.Logf("%+v", <-put)
 
 	t.Logf("[latency.parse] total: %v, details: %+v", sumDurations(parseLatencies), parseLatencies)
@@ -161,9 +161,9 @@ func Test_parseLine2_(t *testing.T) {
 
 func Test_run(t *testing.T) {
 	const (
-		fileName  = "./measurements.txt"
-		chunkSize = 256 * MB
-		readProcs = 64
+		fileName   = "./measurements.txt"
+		chunkSize  = 256 * MB
+		readProcs  = 64
 		parseProcs = 64
 	)
 	h, err := newHandler(fileName, chunkSize, readProcs, parseProcs)
@@ -171,15 +171,23 @@ func Test_run(t *testing.T) {
 		t.Fatalf("%+v", err)
 	}
 	h.isDebug = true
-	
+
 	result, err := run(&h)
 	if err != nil {
 		t.Fatalf("%+v", err)
 	}
-	
+
 	t.Logf("%+v\n", result.datas[:min(len(result.datas), 50)])
-	t.Logf("sliceLatencies: %v\n", gslice.Sum(result.sliceLatencies))
-	t.Logf("readLatencies: %v\n", gslice.Sum(gslice.Flatten(result.readLatencies)))
-	t.Logf("parseLatencies: %v\n", gslice.Sum(gslice.Flatten(result.parseLatencies)))
-	t.Logf("mergeLatencies: %v\n", gslice.Sum(result.mergeLatencies))
+	t.Logf("sliceLatencies: max: %v, total: %v\n",
+		gslice.Max(result.sliceLatencies).Value(),
+		gslice.Sum(result.sliceLatencies))
+	t.Logf("readLatencies: max: %v, total: %v\n",
+		gslice.Max(gslice.Flatten(result.readLatencies)).Value(),
+		gslice.Sum(gslice.Flatten(result.readLatencies)))
+	t.Logf("parseLatencies: max: %v, total: %v\n",
+		gslice.Max(gslice.Flatten(result.parseLatencies)).Value(),
+		gslice.Sum(gslice.Flatten(result.parseLatencies)))
+	t.Logf("mergeLatencies: max: %v, total: %v\n",
+		gslice.Max(result.mergeLatencies).Value(),
+		gslice.Sum(result.mergeLatencies))
 }

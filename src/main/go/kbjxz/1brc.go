@@ -144,7 +144,7 @@ func run(h *handler) (result, error) {
 	select {
 	case <-ctx.Done():
 		err := context.Cause(ctx)
-		if !errors.Is(err, context.Canceled){
+		if !errors.Is(err, context.Canceled) {
 			return result{}, err
 		}
 	case err := <-wait:
@@ -153,7 +153,10 @@ func run(h *handler) (result, error) {
 		}
 	}
 
-	printStationDatas(h, datas)
+	if !h.isDebug {
+		printStationDatas(h, datas)
+	}
+
 	return result{
 		datas:          datas,
 		sliceLatencies: sliceLatencies,
