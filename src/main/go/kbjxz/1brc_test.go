@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bytedance/gg/gslice"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -156,4 +157,28 @@ func Test_parseLine2_(t *testing.T) {
 	if !reflect.DeepEqual(got, exp) {
 		t.Errorf("\nexp:%+v\ngot:%+v", exp, got)
 	}
+}
+
+func Test_run(t *testing.T) {
+	const (
+		fileName  = "./measurements.txt"
+		chunkSize = 256 * MB
+		readProcs = 16
+		parseProcs = 16
+	)
+	h, err := newHandler(fileName, chunkSize, readProcs, parseProcs)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	
+	result, err := run(&h)
+	if err != nil {
+		t.Fatalf("%+v", err)
+	}
+	
+	t.Logf("%+v\n", result.datas[:min(len(result.datas), 50)])
+	t.Logf("sliceLatencies: %v\n", gslice.Sum(result.sliceLatencies))
+	t.Logf("readLatencies: %v\n", gslice.Sum(gslice.Flatten(result.readLatencies)))
+	t.Logf("parseLatencies: %v\n", gslice.Sum(gslice.Flatten(result.parseLatencies)))
+	t.Logf("mergeLatencies: %v\n", gslice.Sum(result.mergeLatencies))
 }

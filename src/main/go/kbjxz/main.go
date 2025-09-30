@@ -157,8 +157,8 @@ func parseLine(line []byte, buf [8]byte) (record, error) {
 }
 
 type partialResult struct {
-	Index map[string]int
-	Stations  []stationData
+	Index    map[string]int
+	Stations []stationData
 }
 
 func (pr *partialResult) insert(r *record) {
@@ -295,8 +295,8 @@ func parseChunks(ctx context.Context, put chan<- []byte, get <-chan []byte) ([]s
 		line    []byte
 		lineBuf [8]byte
 		partial = partialResult{
-			Index: map[string]int{},
-			Stations:  make([]stationData, 0),
+			Index:    map[string]int{},
+			Stations: make([]stationData, 0),
 		}
 		chunk []byte
 		ok    bool

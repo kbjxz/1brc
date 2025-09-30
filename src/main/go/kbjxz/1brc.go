@@ -3,14 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
 	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -20,13 +23,13 @@ const (
 )
 
 type handler struct {
-	f           *os.File
-	fileName    string
-	fileSize    int64
-	readProcs   int64
-	parseProces int64
-	chunkSize   int64
-	arena       chan []byte
+	f          *os.File
+	fileName   string
+	fileSize   int64
+	readProcs  int64
+	parseProcs int64
+	chunkSize  int64
+	arena      chan []byte
 }
 
 type fileSlice struct {
@@ -38,10 +41,10 @@ func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (ha
 	assert(parseProcs > 0, "[parseprocs] exp > 0, got: %d", parseProcs)
 
 	var ret = handler{
-		fileName:    fileName,
-		readProcs:   int64(readProcs),
-		parseProces: int64(parseProcs),
-		arena:       make(chan []byte, parseProcs+1),
+		fileName:   fileName,
+		readProcs:  int64(readProcs),
+		parseProcs: int64(parseProcs),
+		arena:      make(chan []byte, parseProcs+1),
 	}
 
 	// open file
@@ -68,6 +71,82 @@ func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (ha
 	}
 
 	return ret, nil
+}
+
+type result struct {
+	datas          []stationData
+	sliceLatencies []time.Duration
+	readLatencies  [][]time.Duration
+	parseLatencies [][]time.Duration
+	mergeLatencies []time.Duration
+}
+
+func run(h *handler) (result, error) {
+	eg, ctx := errgroup.WithContext(context.Background())
+
+	var latenciesCount = h.fileSize/h.chunkSize + 1
+	var sliceLatencies = make([]time.Duration, 0, latenciesCount)
+	var fsliceCh = make(chan fileSlice)
+	eg.Go(func() error {
+		defer close(fsliceCh)
+		return sliceFile(h, &sliceLatencies, fsliceCh)
+	})
+
+	var readWg sync.WaitGroup
+	readWg.Add(int(h.readProcs))
+	var parseCh = make(chan []byte)
+	var readLatencies = make([][]time.Duration, h.readProcs)
+	for i := 0; i < int(h.readProcs); i++ {
+		latencies := &readLatencies[i]
+		*latencies = make([]time.Duration, 0, latenciesCount)
+		eg.Go(func() error {
+			defer readWg.Done()
+			return readFileSlice(ctx, h, latencies, parseCh, fsliceCh)
+		})
+	}
+	eg.Go(func() error {
+		readWg.Wait()
+		close(parseCh)
+		return nil
+	})
+
+	var parseWg sync.WaitGroup
+	parseWg.Add(int(h.parseProcs))
+	var parseLatencies = make([][]time.Duration, int(h.parseProcs))
+	var reduceCh = make(chan []stationData)
+	for i := 0; i < int(h.parseProcs); i++ {
+		latencies := &parseLatencies[i]
+		*latencies = make([]time.Duration, 0, latenciesCount)
+		eg.Go(func() error {
+			defer parseWg.Done()
+			return parseChunk(ctx, h, latencies, reduceCh, parseCh)
+		})
+	}
+	eg.Go(func() error {
+		parseWg.Wait()
+		close(reduceCh)
+		return nil
+	})
+
+	var mergeLatencies = make([]time.Duration, 0, latenciesCount)
+	var datas []stationData
+	eg.Go(func() error {
+		datas = reduceStationDatas(ctx, h, &mergeLatencies, reduceCh)
+		return nil
+	})
+
+	if err := eg.Wait(); err != nil {
+		return result{}, err
+	}
+
+	printStationDatas(h, datas)
+	return result{
+		datas:          datas,
+		sliceLatencies: sliceLatencies,
+		readLatencies:  readLatencies,
+		parseLatencies: parseLatencies,
+		mergeLatencies: mergeLatencies,
+	}, nil
 }
 
 func sliceFile(h *handler, latencies *[]time.Duration, put chan<- fileSlice) error {
@@ -154,7 +233,7 @@ func readFileSlice(
 }
 
 func parseChunk(
-	ctx context.Context, h *handler, latencies *[]time.Duration, 
+	ctx context.Context, h *handler, latencies *[]time.Duration,
 	put chan<- []stationData, get <-chan []byte,
 ) error {
 	var buf []byte
@@ -169,9 +248,9 @@ func parseChunk(
 		case <-ctx.Done():
 			return nil
 		case buf, ok = <-get:
-			shouldBreak = !ok	
+			shouldBreak = !ok
 		}
-		
+
 		if shouldBreak {
 			break
 		}
@@ -198,8 +277,8 @@ func parseChunk(
 			s.Count++
 			s.Min = min(s.Min, pr.temperature)
 			s.Max = max(s.Max, pr.temperature)
-			
-			// advance	
+
+			// advance
 			data = data[pr.advacend:]
 		}
 
@@ -207,7 +286,7 @@ func parseChunk(
 
 		h.arena <- buf
 	}
-	
+
 	sort.Slice(result.Stations, func(i, j int) bool {
 		return result.Stations[i].Station < result.Stations[j].Station
 	})
@@ -233,7 +312,13 @@ func parseLine2(data []byte) (parseResult, error) {
 	// scan temperature
 	idxData++
 	var idxTemp = 0
-	for idxData < len(data) {
+	for {
+		// last line in file has no linebreak
+		if idxData < len(data) {
+			break
+		}
+
+		// bound check
 		if idxTemp == cap(tempBuf) {
 			beg := len(ret.station) + 0
 			end := min(len(data), beg+31)
@@ -252,6 +337,7 @@ func parseLine2(data []byte) (parseResult, error) {
 		}
 	}
 
+	// parse temperature as int
 	var err error
 	ret.temperature, err = strconv.Atoi(unsafe.String(&tempBuf[0], idxTemp))
 	if err != nil {
@@ -261,4 +347,67 @@ func parseLine2(data []byte) (parseResult, error) {
 	ret.advacend = idxData
 
 	return ret, nil
+}
+
+func reduceStationDatas(
+	ctx context.Context, h *handler, latencies *[]time.Duration, get <-chan []stationData,
+) []stationData {
+	resultIndex := make(map[string]int)
+	result := []stationData{}
+	for {
+		partialList, status := selectRecieve(ctx, get)
+		if status == canceled {
+			return nil
+		} else if status == closed {
+			break
+		}
+
+		var start = time.Now()
+		for i := range partialList {
+			partialData := &partialList[i]
+			idx, ok := resultIndex[partialData.Station]
+			if !ok {
+				// push partialData as initial value
+				result = append(result, *partialData)
+				resultIndex[partialData.Station] = len(result) - 1
+			} else {
+				// reduce
+				r := &result[idx]
+				r.Min = min(r.Min, partialData.Min)
+				r.Avg = (r.Count*r.Avg + partialData.Avg) / (r.Count + 1)
+				r.Count += 1
+				r.Max = max(r.Max, partialData.Max)
+			}
+		}
+		(*latencies) = append((*latencies), time.Since(start))
+	}
+	return result
+}
+
+type selectRetStatus string
+
+const (
+	canceled selectRetStatus = "canceled"
+	ready    selectRetStatus = "ready"
+	closed   selectRetStatus = "closed"
+)
+
+func selectRecieve[T any](ctx context.Context, ch <-chan T) (T, selectRetStatus) {
+	var v T
+	var ok bool
+	select {
+	case <-ctx.Done():
+		return v, canceled
+	case v, ok = <-ch:
+		if !ok {
+			return v, closed
+		}
+		return v, ready
+	}
+}
+
+func printStationDatas(h *handler, result []stationData) {
+	for _, v := range result {
+		fmt.Println(v.String())
+	}
 }

@@ -1,3 +1,5 @@
+github.com/bytedance/gg v1.1.0 h1:FSKRxOZeN30w7h6snEbHxzgVMUV7+Xu4gc/Lz1cmBFw=
+github.com/bytedance/gg v1.1.0/go.mod h1:MeGhXyy5K20hNAU9GkMM51sXdm/lsqdU0CxwIiGvZpo=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 golang.org/x/sync v0.17.0 h1:l60nONMj9l5drqw6jlhIELNv9I0A4OFgRsG9k2oT9Ug=
