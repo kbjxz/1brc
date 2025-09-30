@@ -37,6 +37,11 @@ type fileSlice struct {
 	beg, end int64
 }
 
+type partialResult struct {
+	Index    map[string]int
+	Stations []stationData
+}
+
 func newHandler(fileName string, chunkSize int64, readProcs, parseProcs int) (handler, error) {
 	assert(readProcs > 0, "[readprocs] exp > 0, got: %d", readProcs)
 	assert(parseProcs > 0, "[parseprocs] exp > 0, got: %d", parseProcs)
@@ -461,4 +466,8 @@ func sprintSize(size int64) string {
 	} else {
 		return fmt.Sprint(prec(size, 1), "B")
 	}
+}
+
+func resetChunk(b []byte) []byte {
+	return unsafe.Slice(unsafe.SliceData(b), cap(b))
 }
