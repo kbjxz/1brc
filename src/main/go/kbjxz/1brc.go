@@ -155,13 +155,16 @@ func run(h *handler) (result, error) {
 		defer close(wait)
 		wait <- eg.Wait()
 	}()
-	select {
-	case <-ctx.Done():
+
+	err, status := selectReceive(ctx, wait)
+	Assert(status != closed, "should not close wait ch")
+	switch status {
+	case canceled:
 		err := context.Cause(ctx)
 		if !errors.Is(err, context.Canceled) {
 			return result{}, err
 		}
-	case err := <-wait:
+	case ready:
 		if err != nil {
 			return result{}, err
 		}
@@ -230,15 +233,11 @@ func readFileSlice(
 	put chan<- []byte, get <-chan fileSlice,
 ) error {
 	var fs fileSlice
-	var ok bool
+	var status selectRetStatus
 	for {
-		select {
-		case <-ctx.Done():
+		fs, status = selectReceive(ctx, get)
+		if status == canceled || status == closed {
 			return nil
-		case fs, ok = <-get:
-			if !ok {
-				return nil
-			}
 		}
 
 		start := time.Now()
@@ -267,18 +266,19 @@ func parseChunk(
 	put chan<- []stationData2, get <-chan []byte,
 ) error {
 	var buf []byte
-	var ok bool
+	var status selectRetStatus
 	var result = partialResult2{
 		Index:    map[string]int{},
 		Stations: []stationData2{},
 	}
 	var shouldBreak = false
 	for {
-		select {
-		case <-ctx.Done():
+		buf, status = selectReceive(ctx, get)
+		if status == canceled {
 			return nil
-		case buf, ok = <-get:
-			shouldBreak = !ok
+		} 
+		if status == closed {
+			break
 		}
 
 		if shouldBreak {
